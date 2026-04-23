@@ -194,3 +194,89 @@ class WatchUpdate(BaseModel):
             raise ValueError(f"max {settings.max_tickets_per_order} tickets per order")
         return v
 
+
+class WatchOut(ORM):
+    id: int
+    match_id: int
+    mode: WatchMode
+    strategy: Strategy
+    quantity: int
+    max_price_cents: int
+    category_codes: list[str]
+    exact_block: str | None
+    exact_positions: list[tuple[int, int]]
+    exact_fallback: bool
+    status: str
+    message: str
+    order_id: str | None
+    created_at_ms: int
+
+
+class OrderOut(BaseModel):
+    id: str
+    watch_id: int | None
+    match_id: int
+    match_label: str
+    category_code: str
+    category_name: str
+    quantity: int
+    unit_price_cents: int
+    total_cents: int
+    currency: str
+    status: str
+    gateway: str
+    payment_id: str | None
+    failure_reason: str
+    latency_ms: int | None
+    trigger: str
+    created_at_ms: int
+    # Seat position inside the stadium
+    stand: str
+    block: str
+    row: int  # first row (all positions are in `positions`)
+    seats: list[int]
+    positions: list[tuple[int, int]]  # [[row, seat], ...]
+    gate: str
+    block_index: int
+    attendees: list[dict]
+    paid_at_ms: int | None
+    updated_at_ms: int
+    # Only populated while the bank requires customer authentication (3-D Secure)
+    client_secret: str | None = None
+    payment_method_id: str | None = None
+
+    @classmethod
+    def from_order(cls, o: Order) -> "OrderOut":
+        action = o.status == "requires_action"
+        return cls(
+            id=o.id,
+            watch_id=o.watch_id,
+            match_id=o.match_id,
+            match_label=o.match.label,
+            category_code=o.category.code,
+            category_name=o.category.name,
+            quantity=o.quantity,
+            unit_price_cents=o.unit_price_cents,
+            total_cents=o.total_cents,
+            currency=o.currency,
+            status=o.status,
+            gateway=o.gateway,
+            payment_id=o.payment_id,
+            failure_reason=o.failure_reason,
+            latency_ms=o.latency_ms,
+            trigger=o.trigger,
+            created_at_ms=o.created_at_ms,
+            stand=o.category.stand,
+            block=o.block,
+            row=o.row,
+            seats=[s for _, s in o.positions],
+            positions=o.positions,
+            gate=o.gate,
+            block_index=o.block_index,
+            attendees=o.attendees,
+            paid_at_ms=o.paid_at_ms,
+            updated_at_ms=o.updated_at_ms,
+            client_secret=o.client_secret if action else None,
+            payment_method_id=o.payment_method_id if action else None,
+        )
+
