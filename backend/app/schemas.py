@@ -280,3 +280,56 @@ class OrderOut(BaseModel):
             payment_method_id=o.payment_method_id if action else None,
         )
 
+
+class SeatSelection(BaseModel):
+    """Exact seats picked one by one: one block, any rows. positions = [[row, seat], ...]."""
+
+    block: str = Field(max_length=8)
+    positions: list[tuple[int, int]] = Field(min_length=1)
+
+    @field_validator("positions")
+    @classmethod
+    def _positions(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        if len(v) > settings.max_tickets_per_order:
+            raise ValueError(f"max {settings.max_tickets_per_order} tickets per order")
+        if len(set(v)) != len(v) or any(r < 1 or s < 1 for r, s in v):
+            raise ValueError("seats must be unique, with positive row and seat numbers")
+        return sorted(v)
+
+
+class BlockSummary(BaseModel):
+    block: str
+    zone_code: str
+    block_index: int
+    rank: int
+    gate: str
+    rows: int
+    seats_per_row: int
+    free: int
+
+
+class BlockDetail(BlockSummary):
+    state: str  # one char per seat, row-major: '0' free, '1' sold/held
+
+
+class QuickBuy(BaseModel):
+    match_id: int
+    seats: SeatSelection | None = None
+    exact_fallback: bool = False
+    strategy: Strategy = "best"
+    quantity: int = Field(2, ge=1)
+    max_price_cents: int | None = Field(None, gt=0)
+    category_codes: list[str] | None = None
+
+    @field_validator("quantity")
+    @classmethod
+    def _qty(cls, v: int) -> int:
+        if v > settings.max_tickets_per_order:
+            raise ValueError(f"max {settings.max_tickets_per_order} tickets per order")
+        return v
+
+
+class LogEntry(BaseModel):
+    ts: int
+    level: Literal["info", "ok", "warn", "error"]
+    message: str
