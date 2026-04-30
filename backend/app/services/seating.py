@@ -90,3 +90,71 @@ def parse_positions(csv: str) -> list[Position]:
             out.append((int(r), int(s)))
     return out
 
+
+def describe(positions: list[Position]) -> str:
+    """'Row 5: 11, 12 · Row 6: 3'"""
+    rows: dict[int, list[int]] = {}
+    for r, s in sorted(positions):
+        rows.setdefault(r, []).append(s)
+    return " · ".join(f"Row {r}: {', '.join(map(str, ss))}" for r, ss in rows.items())
+
+
+def generate_state(rows: int, spr: int, sold_fraction: float, rng: random.Random) -> str:
+    """Pre-sold seats (season tickets, members) in realistic clumps: alternating runs of sold
+    and free seats with geometric lengths, so the sold share is ~`sold_fraction`."""
+    free_mean = 4.0  # typical gap between season-ticket holders
+    sold_mean = max(1.0, free_mean * sold_fraction / max(1e-6, 1 - sold_fraction))
+    out: list[str] = []
+    for _ in range(rows):
+        line: list[str] = []
+        n = 0
+        taken = rng.random() < sold_fraction
+        while n < spr:
+            length = 1 + int(rng.expovariate(1 / max(0.01, (sold_mean if taken else free_mean) - 1)))
+            length = min(length, spr - n)
+            line.append((TAKEN if taken else FREE) * length)
+            n += length
+            taken = not taken
+        out.append("".join(line))
+    return "".join(out)
+
+
+def seats_free(state: str, row: int, seats: list[int], spr: int) -> bool:
+    return all(state[_idx(row, s, spr)] == FREE for s in seats)
+
+
+def set_seats(state: str, row: int, seats: list[int], spr: int, value: str) -> str:
+    chars = list(state)
+    for s in seats:
+        chars[_idx(row, s, spr)] = value
+    return "".join(chars)
+
+
+def best_run(state: str, rows: int, spr: int, qty: int) -> tuple[int, list[int]] | None:
+    """Front-most row with `qty` adjacent free seats, as close to the middle of the row as possible."""
+    centre = (spr + 1) / 2
+    for row in range(1, rows + 1):
+        line = state[(row - 1) * spr: row * spr]
+        best: tuple[float, int] | None = None
+        for start in range(0, spr - qty + 1):
+            if FREE * qty == line[start: start + qty]:
+                dist = abs((start + 1 + start + qty) / 2 - centre)
+                if best is None or dist < best[0]:
+                    best = (dist, start + 1)
+        if best:
+            return row, list(range(best[1], best[1] + qty))
+    return None
+
+
+def random_run(state: str, rows: int, spr: int, max_len: int, rng: random.Random) -> tuple[int, list[int]] | None:
+    """A rival buyer grabs 1..max_len adjacent free seats somewhere in the block."""
+    free = [i for i, ch in enumerate(state) if ch == FREE]
+    if not free:
+        return None
+    i = rng.choice(free)
+    row, first = i // spr + 1, i % spr + 1
+    seats = [first]
+    want = rng.randint(1, max_len)
+    while len(seats) < want and seats[-1] < spr and state[_idx(row, seats[-1] + 1, spr)] == FREE:
+        seats.append(seats[-1] + 1)
+    return row, seats
