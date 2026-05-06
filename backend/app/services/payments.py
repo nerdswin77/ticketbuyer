@@ -102,3 +102,99 @@ def _brand(number: str) -> str:
         return "amex"
     return "card"
 
+
+class MockGateway(PaymentGateway):
+    """Behaves like Stripe's test cards:
+    4242 4242 4242 4242 succeeds · 4000 0000 0000 0002 declined ·
+    4000 0000 0000 9995 insufficient funds · 4000 0025 0000 3155 requires 3-D Secure
+    """
+
+    name = "mock"
+    _BEHAVIOUR = {
+        "4000000000000002": "decline",
+        "4000000000009995": "funds",
+        "4000002500003155": "3ds",
+    }
+
+    def __init__(self) -> None:
+        self._payments: dict[str, ChargeStatus] = {}
+
+    def create_setup(self, customer_id, email, name) -> SetupResult:
+        return SetupResult(customer_id=customer_id or f"cus_mock_{secrets.token_hex(6)}", client_secret=None)
+
+    def attach(self, customer_id, payload: PaymentMethodIn) -> CardInfo:
+        card = payload.mock_card
+        if card is None:
+            raise PaymentError("Card details are required")
+        number = "".join(ch for ch in card.number if ch.isdigit())
+        if not 12 <= len(number) <= 19 or not _luhn_ok(number):
+            raise PaymentError("Card number is invalid")
+        today = date.today()
+        if (card.exp_year, card.exp_month) < (today.year, today.month):
+            raise PaymentError("Card has expired")
+        behaviour = self._BEHAVIOUR.get(number, "ok")
+        return CardInfo(
+            payment_method_id=f"pm_mock_{behaviour}_{secrets.token_hex(4)}",
+            brand=_brand(number),
+            last4=number[-4:],
+            exp=f"{card.exp_month:02d}/{card.exp_year}",
+        )
+
+    def charge(self, *, customer_id, payment_method_id, amount_cents, currency, idempotency_key, description, metadata):
+        pid = f"pi_mock_{secrets.token_hex(8)}"
+        behaviour = payment_method_id.split("_")[2] if payment_method_id.startswith("pm_mock_") else "decline"
+        if behaviour == "decline":
+            return ChargeResult("failed", pid, "Your card was declined.")
+        if behaviour == "funds":
+            return ChargeResult("failed", pid, "Your card has insufficient funds.")
+        if behaviour == "3ds":
+            self._payments[pid] = "requires_action"
+            return ChargeResult("requires_action", pid, client_secret=f"{pid}_secret_mock")
+        self._payments[pid] = "succeeded"
+        return ChargeResult("succeeded", pid)
+
+    def confirm(self, payment_id: str) -> ChargeResult:
+        # In the mock, "confirm" is the simulated 3-D Secure approval.
+        if payment_id not in self._payments:
+            return ChargeResult("failed", payment_id, "Unknown payment")
+        self._payments[payment_id] = "succeeded"
+        return ChargeResult("succeeded", payment_id)
+
+    def refund(self, payment_id: str) -> None:
+        if self._payments.get(payment_id) != "succeeded":
+            raise PaymentError("Payment cannot be refunded")
+        self._payments[payment_id] = "failed"
+
+
+# --------------------------------------------------------------------------- stripe
+
+class StripeGateway(PaymentGateway):
+    name = "stripe"
+
+    def __init__(self, secret_key: str) -> None:
+        stripe.api_key = secret_key
+
+    def create_setup(self, customer_id, email, name) -> SetupResult:
+        try:
+            if not customer_id:
+                customer_id = stripe.Customer.create(email=email or None, name=name or None).id
+            si = stripe.SetupIntent.create(customer=customer_id, usage="off_session", payment_method_types=["card"])
+            return SetupResult(customer_id=customer_id, client_secret=si.client_secret)
+        except stripe.StripeError as e:
+            raise PaymentError(e.user_message or str(e)) from e
+
+    def attach(self, customer_id, payload: PaymentMethodIn) -> CardInfo:
+        if not payload.setup_intent_id:
+            raise PaymentError("setup_intent_id is required")
+        try:
+            si = stripe.SetupIntent.retrieve(payload.setup_intent_id)
+            if si.status != "succeeded" or not si.payment_method:
+                raise PaymentError(f"Card setup not completed (status: {si.status})")
+            if customer_id and si.customer != customer_id:
+                raise PaymentError("Setup belongs to a different customer")
+            pm = stripe.PaymentMethod.retrieve(si.payment_method)
+            stripe.Customer.modify(si.customer, invoice_settings={"default_payment_method": pm.id})
+            return CardInfo(pm.id, pm.card.brand, pm.card.last4, f"{pm.card.exp_month:02d}/{pm.card.exp_year}")
+        except stripe.StripeError as e:
+            raise PaymentError(e.user_message or str(e)) from e
+
