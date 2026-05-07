@@ -198,3 +198,60 @@ class StripeGateway(PaymentGateway):
         except stripe.StripeError as e:
             raise PaymentError(e.user_message or str(e)) from e
 
+    @staticmethod
+    def _map(pi: Any) -> ChargeResult:
+        status = pi["status"]
+        if status == "succeeded":
+            return ChargeResult("succeeded", pi["id"])
+        if status == "processing":
+            return ChargeResult("processing", pi["id"])
+        if status == "requires_action":
+            return ChargeResult("requires_action", pi["id"], client_secret=pi["client_secret"])
+        err = (pi.get("last_payment_error") or {}).get("message") or f"Payment {status}"
+        return ChargeResult("failed", pi["id"], err)
+
+    def charge(self, *, customer_id, payment_method_id, amount_cents, currency, idempotency_key, description, metadata):
+        try:
+            pi = stripe.PaymentIntent.create(
+                amount=amount_cents,
+                currency=currency,
+                customer=customer_id,
+                payment_method=payment_method_id,
+                off_session=True,
+                confirm=True,
+                description=description,
+                metadata=metadata,
+                idempotency_key=idempotency_key,
+            )
+            return self._map(pi)
+        except stripe.CardError as e:
+            err = e.error
+            pi = getattr(err, "payment_intent", None)
+            if err and err.code == "authentication_required" and pi:
+                return ChargeResult("requires_action", pi["id"], client_secret=pi["client_secret"])
+            return ChargeResult("failed", pi["id"] if pi else None, e.user_message or str(e))
+        except stripe.StripeError as e:
+            log.exception("stripe charge failed")
+            return ChargeResult("failed", None, e.user_message or "Payment provider error")
+
+    def confirm(self, payment_id: str) -> ChargeResult:
+        try:
+            return self._map(stripe.PaymentIntent.retrieve(payment_id))
+        except stripe.StripeError as e:
+            return ChargeResult("failed", payment_id, e.user_message or str(e))
+
+    def refund(self, payment_id: str) -> None:
+        try:
+            stripe.Refund.create(payment_intent=payment_id)
+        except stripe.StripeError as e:
+            raise PaymentError(e.user_message or str(e)) from e
+
+
+_gateway: PaymentGateway | None = None
+
+
+def get_gateway() -> PaymentGateway:
+    global _gateway
+    if _gateway is None:
+        _gateway = StripeGateway(settings.stripe_secret_key) if settings.stripe_enabled else MockGateway()
+    return _gateway
