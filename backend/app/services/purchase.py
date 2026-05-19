@@ -194,3 +194,81 @@ async def execute_purchase(watch_id: int, trigger: str) -> Order | None:
             apply_charge_result(db, order, result)
             return order
 
+
+def apply_charge_result(db: Session, order: Order, r: ChargeResult) -> None:
+    if r.payment_id:
+        order.payment_id = r.payment_id
+    if r.status == "succeeded":
+        finalize_paid(db, order)
+    elif r.status in ("requires_action", "processing"):
+        order.status = "requires_action" if r.status == "requires_action" else "pending"
+        order.client_secret = r.client_secret
+        db.commit()
+        publish_order(order)
+        w = db.get(Watch, order.watch_id) if order.watch_id else None
+        if w and r.status == "requires_action":
+            set_watch(db, w, "requires_action", "Your bank needs you to approve this payment")
+            bus.log("warn", f"⚠ {order.match.label}: bank authentication required (seats held {settings.hold_seconds}s)")
+    else:
+        finalize_failed(db, order, r.error or "Payment failed")
+
+
+def finalize_paid(db: Session, order: Order) -> None:
+    order.status = "paid"
+    order.paid_at_ms = now_ms()
+    order.client_secret = None
+    order.hold_expires_at_ms = None
+    db.commit()
+    publish_order(order)
+    w = db.get(Watch, order.watch_id) if order.watch_id else None
+    if w:
+        set_watch(
+            db, w, "purchased",
+            f"{order.category.name} · Block {order.block}, {describe(order.positions)} · {money(order.total_cents)}",
+        )
+    bus.log(
+        "ok",
+        f"✔ BOUGHT {order.match.label}: {order.quantity}× {order.category.code} {money(order.total_cents)}, "
+        f"Block {order.block} · {describe(order.positions)} "
+        f"(order {order.id}, {order.latency_ms} ms after opening)",
+    )
+
+
+def release_order_seats(db: Session, order: Order) -> None:
+    exchange.release(db, order.match_id, order.block, order.positions)
+    bus.publish("seats", {"match_id": order.match_id, "block": order.block})
+
+
+def finalize_failed(db: Session, order: Order, reason: str) -> None:
+    if order.status in ("pending", "requires_action"):
+        release_order_seats(db, order)
+        publish_inventory(db, order.match_id)
+    order.status = "failed"
+    order.failure_reason = reason
+    order.client_secret = None
+    order.hold_expires_at_ms = None
+    db.commit()
+    publish_order(order)
+    w = db.get(Watch, order.watch_id) if order.watch_id else None
+    if w:
+        set_watch(db, w, "failed", f"Payment failed: {reason}")
+    bus.log("error", f"✖ Payment failed for {order.match.label} (order {order.id}): {reason}. Seats released")
+
+
+async def run_hold_sweeper() -> None:
+    """Release seats whose 3-D Secure authentication was never completed."""
+    while True:
+        await asyncio.sleep(5)
+        try:
+            with SessionLocal() as db:
+                expired = db.scalars(
+                    select(Order).where(
+                        Order.status.in_(["pending", "requires_action"]),
+                        Order.hold_expires_at_ms.is_not(None),
+                        Order.hold_expires_at_ms < now_ms(),
+                    )
+                ).all()
+                for o in expired:
+                    finalize_failed(db, o, "Seat hold expired before payment was approved")
+        except Exception:
+            log.exception("hold sweeper failed")
