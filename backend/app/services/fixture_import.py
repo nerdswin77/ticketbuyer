@@ -106,3 +106,36 @@ def import_league(db: Session, league_id: str, client: httpx.Client | None = Non
         tbc = fx.get("status") == "SCHEDULED"  # TIMED = kick-off time confirmed
         rnd = f"Matchday {fx['matchday']}" if fx.get("matchday") else (fx.get("stage") or "").replace("_", " ").title()
 
+        m = db.scalar(select(Match).where(Match.external_id == ext))
+        if m is not None:  # keep sale state; refresh date/time (fixtures get moved for TV)
+            if (m.kickoff_ms, m.kickoff_tbc) != (kickoff_ms, tbc):
+                m.kickoff_ms, m.kickoff_tbc = kickoff_ms, tbc
+                updated += 1
+            continue
+
+        stadium = directory.get(home, {}).get("stadium") or (fx.get("venue") or f"{home} home ground")
+        city, country, capacity, tz = STADIUMS.get(stadium, ("", "", 0, LEAGUE_TZ.get(league_id, "UTC")))
+        famous, demand = _pair_info(home, away)
+        now = now_ms()
+        m = Match(
+            league_id=league_id, home_team=home, away_team=away, stadium=stadium, famous_name=famous, demand=demand,
+            city=city, country=country, capacity=capacity, timezone=tz, round_label=rnd or "Scheduled",
+            kickoff_ms=kickoff_ms, kickoff_tbc=tbc, published_at_ms=now, sale_date_tba=True,
+            sale_opens_at_ms=now + UNPUBLISHED_SALE_MS, source="import", external_id=ext,
+            home_crest_url=home_crest, away_crest_url=away_crest,
+            categories=[
+                SeatCategory(code=z.code, name=z.name, stand=z.stand, sort_order=n, price_cents=_zone_price(z, demand),
+                             description=z.description.replace("away supporters", f"{away} supporters"),
+                             capacity=0, available=0)
+                for n, z in enumerate(ZONES)
+            ],
+        )
+        db.add(m)
+        db.flush()
+        restock(db, m, rng)
+        created += 1
+    db.commit()
+    return {"created": created, "updated": updated}
+
+
+__all__ = ["COMPETITIONS", "ImportError_", "import_league", "ZoneInfo"]
