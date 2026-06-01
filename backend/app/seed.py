@@ -225,3 +225,85 @@ STADIUMS: dict[str, tuple[str, str, int, str]] = {
     "Vila Belmiro": ("Santos", "Brazil", 16068, "America/Sao_Paulo"),
 }
 
+EXTRA_HOME_GROUNDS = {
+    "Real Betis": "Estadio Benito Villamarín", "Athletic Club": "San Mamés", "Villarreal": "Estadio de la Cerámica",
+    "Everton": "Hill Dickinson Stadium", "Sunderland": "Stadium of Light", "Ipswich": "Portman Road",
+    "West Brom": "The Hawthorns", "Southampton": "St Mary's Stadium", "Hibernian": "Easter Road",
+    "Schalke 04": "Veltins-Arena", "Saint-Étienne": "Stade Geoffroy-Guichard", "Lens": "Stade Bollaert-Delelis",
+    "Twente": "De Grolsch Veste", "Standard Liège": "Stade Maurice Dufrasne", "Santos": "Vila Belmiro",
+}
+
+
+def team_directory() -> dict[str, dict]:
+    """Every club in the catalogue with its home ground and competitions."""
+    teams: dict[str, dict] = {}
+    for lid, home, away, stadium, *_ in FIXTURES + UPCOMING_POOL:
+        for name in (home, away):
+            t = teams.setdefault(name, {"name": name, "stadium": "", "leagues": set()})
+            t["leagues"].add(lid)
+        if lid not in ("UCL", "UEL", "UECL") and not teams[home]["stadium"]:
+            teams[home]["stadium"] = stadium
+    for name, t in teams.items():
+        t["stadium"] = t["stadium"] or EXTRA_HOME_GROUNDS.get(name, "")
+        t["city"] = STADIUMS.get(t["stadium"], ("",))[0]
+        t["leagues"] = sorted(t["leagues"])
+    return teams
+
+
+def _pair_info(home: str, away: str) -> tuple[str | None, int]:
+    """Known rivalry name and demand for a pairing (either way round); otherwise team-based demand."""
+    team_demand: dict[str, int] = {}
+    for _lid, h, a, _st, famous, demand in FIXTURES + UPCOMING_POOL:
+        if {h, a} == {home, away} and famous:
+            return famous, demand
+        for t in (h, a):
+            team_demand[t] = max(team_demand.get(t, 0), demand)
+    return None, max(5, round((team_demand.get(home, 6) + team_demand.get(away, 6)) / 2))
+
+
+def create_user_match(db: Session, league_id: str, home: str, away: str, day: date, hhmm: str | None) -> tuple[Match, bool]:
+    """Add a fixture the buyer knows about (e.g. announced by the club) with ticket sale date TBA.
+    Returns (match, created)."""
+    teams = team_directory()
+    stadium = teams.get(home, {}).get("stadium") or EXTRA_HOME_GROUNDS.get(home, "")
+    if not stadium or stadium not in STADIUMS:
+        raise ValueError(f"Home ground of {home} is unknown")
+    city, country, capacity, tz = STADIUMS[stadium]
+    hour, minute = (int(hhmm[:2]), int(hhmm[3:])) if hhmm else (21, 0)
+    kickoff = datetime.combine(day, time(hour, minute), tzinfo=ZoneInfo(tz))
+    kickoff_ms = int(kickoff.timestamp() * 1000)
+
+    same_day = db.scalars(select(Match).where(Match.league_id == league_id, Match.home_team == home, Match.away_team == away)).all()
+    for m in same_day:
+        if datetime.fromtimestamp(m.kickoff_ms / 1000, ZoneInfo(tz)).date() == day:
+            return m, False
+
+    famous, demand = _pair_info(home, away)
+    now = now_ms()
+    m = Match(
+        league_id=league_id, home_team=home, away_team=away, stadium=stadium, famous_name=famous, demand=demand,
+        city=city, country=country, capacity=capacity, timezone=tz, round_label="Added by you",
+        kickoff_ms=kickoff_ms, kickoff_tbc=hhmm is None,
+        published_at_ms=now, sale_date_tba=True, sale_opens_at_ms=now + UNPUBLISHED_SALE_MS, source="user",
+        categories=[
+            SeatCategory(code=z.code, name=z.name, stand=z.stand, sort_order=n, price_cents=_zone_price(z, demand),
+                         description=z.description.replace("away supporters", f"{away} supporters"), capacity=0, available=0)
+            for n, z in enumerate(ZONES)
+        ],
+    )
+    db.add(m)
+    db.flush()
+    restock(db, m, random.Random())
+    db.commit()
+    return m, True
+
+
+@dataclass(frozen=True)
+class Zone:
+    code: str
+    name: str
+    stand: str
+    description: str
+    price_multiplier: float
+    capacity: tuple[int, int]
+
