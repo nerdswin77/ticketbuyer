@@ -307,3 +307,103 @@ class Zone:
     price_multiplier: float
     capacity: tuple[int, int]
 
+
+# Ordered best -> cheapest. Price depends on position: halfway line > wings > behind goal > upper corners.
+ZONES = [
+    Zone("VIP", "Hospitality · VIP Lounge", "vip",
+         "Padded seat on the halfway line with lounge access, a three-course meal and drinks.", 5.0, (8, 25)),
+    Zone("MC", "Main Stand · Centre", "main",
+         "Halfway line, lower tier, beside the dugouts. The best overall view, and covered.", 2.4, (40, 90)),
+    Zone("OC", "Opposite Stand · Centre", "opposite",
+         "Halfway line facing the dugouts, at TV camera height. Excellent tactical view.", 2.0, (40, 90)),
+    Zone("MW", "Main Stand · Wings", "main",
+         "Between the halfway line and the corner flags. Covered, with a good angle on both boxes.", 1.6, (50, 110)),
+    Zone("OW", "Opposite Stand · Wings", "opposite",
+         "Side view towards each penalty area. Good value for a side-on view.", 1.35, (50, 110)),
+    Zone("HE", "Home End · Behind Goal", "home_end",
+         "Among the home supporters' groups. Standing atmosphere, flags and chants; limited view of the far goal.", 1.0, (60, 130)),
+    Zone("AE", "Away End · Visitors", "away_end",
+         "Reserved for away supporters. Segregated section; ID and club membership may be checked.", 0.95, (20, 60)),
+    Zone("CU", "Corners · Upper Tier", "corner",
+         "High, angled view of the whole pitch. The cheapest seats in the stadium.", 0.8, (60, 140)),
+]
+ZONE_CODES = {z.code for z in ZONES}
+# By default, target every zone except hospitality (it costs ~5x a normal seat).
+DEFAULT_ZONE_CODES = sorted(ZONE_CODES - {"VIP"})
+
+
+def default_max_price(m: Match, codes: list[str]) -> int:
+    prices = [c.price_cents for c in m.categories if c.code in codes]
+    return max(prices) if prices else max(c.price_cents for c in m.categories)
+BASE_PRICE_CENTS = 50_00
+
+KICKOFF_SLOTS = [(15, 0), (17, 30), (18, 30), (20, 0), (21, 0)]
+
+
+def _round_label(league_id: str, i: int) -> str:
+    if league_id in ("UCL", "UEL", "UECL"):
+        return f"League phase · Matchday {5 + i % 4}"
+    return f"Matchday {12 + i % 22}"
+
+
+def _zone_price(z: Zone, demand: int) -> int:
+    return int(round(BASE_PRICE_CENTS * (1 + demand / 10) * z.price_multiplier / 500) * 500)  # nearest €5
+
+
+def seed_if_empty(db: Session) -> None:
+    """Idempotent: inserts any leagues/fixtures that are missing (safe on existing databases)."""
+    known_leagues = set(db.scalars(select(League.id)))
+    for i, (lid, name, country, flag) in enumerate(LEAGUES):
+        if lid not in known_leagues:
+            db.add(League(id=lid, name=name, country=country, flag=flag, sort_order=i))
+    db.flush()
+    known = {(m.league_id, m.home_team, m.away_team) for m in db.scalars(select(Match))}
+    today = date.today()
+    added = False
+    for i, (lid, home, away, stadium, famous, demand) in enumerate(FIXTURES + UPCOMING_POOL):
+        if (lid, home, away) in known:
+            continue
+        added = True
+        published = (lid, home, away) not in POOL_KEYS
+        city, country, capacity, tz = STADIUMS.get(stadium, ("", "", 0, "UTC"))
+        hour, minute = KICKOFF_SLOTS[i % len(KICKOFF_SLOTS)]
+        local = datetime.combine(today + timedelta(days=5 + (i * 7) % 60), time(hour, minute), tzinfo=ZoneInfo(tz))
+        m = Match(
+            league_id=lid,
+            home_team=home,
+            away_team=away,
+            stadium=stadium,
+            famous_name=famous,
+            demand=demand,
+            city=city,
+            country=country,
+            capacity=capacity,
+            timezone=tz,
+            round_label=_round_label(lid, i),
+            kickoff_ms=int(local.timestamp() * 1000),
+            sale_opens_at_ms=0,
+            # The base catalogue was announced last week; feed fixtures are announced live.
+            published_at_ms=now_ms() - 7 * 86_400_000 if published else None,
+            categories=[
+                SeatCategory(
+                    code=z.code,
+                    name=z.name,
+                    stand=z.stand,
+                    description=z.description.replace("away supporters", f"{away} supporters"),
+                    sort_order=n,
+                    price_cents=_zone_price(z, demand),
+                    capacity=0,
+                    available=0,
+                )
+                for n, z in enumerate(ZONES)
+            ],
+        )
+        db.add(m)
+    db.commit()
+    if added:
+        reset_schedule(db)
+
+
+TEST_CARD = MockCardIn(number="4242424242424242", exp_month=12, exp_year=2030, cvc="123", name="Test Buyer")
+
+
