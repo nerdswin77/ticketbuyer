@@ -407,3 +407,79 @@ def seed_if_empty(db: Session) -> None:
 TEST_CARD = MockCardIn(number="4242424242424242", exp_month=12, exp_year=2030, cvc="123", name="Test Buyer")
 
 
+def ensure_test_payment_method(db: Session) -> bool:
+    """Mock gateway only: save the always-succeeding test Visa if no card is on file."""
+    gw = get_gateway()
+    if gw.name != "mock":
+        return False
+    p = get_profile(db)
+    if p.payment_method_id and p.gateway == gw.name:
+        return False
+    setup = gw.create_setup(None, p.email, p.full_name)
+    card = gw.attach(setup.customer_id, PaymentMethodIn(mock_card=TEST_CARD))
+    p.gateway, p.customer_id = gw.name, setup.customer_id
+    p.payment_method_id, p.card_brand, p.card_last4, p.card_exp = card.payment_method_id, card.brand, card.last4, card.exp
+    p.full_name = p.full_name or "Test Buyer"
+    db.commit()
+    return True
+
+
+def restock(db: Session, m: Match, rng: random.Random) -> None:
+    """(Re)build the match's seat maps. Before the general sale opens every seat is available;
+    rival buyers take seats only once the sale is live."""
+    existing = {b.block: b for b in db.scalars(select(SeatBlock).where(SeatBlock.match_id == m.id))}
+    active_orders = db.scalars(
+        select(Order).where(Order.match_id == m.id, Order.status.in_(["paid", "pending", "requires_action"]))
+    ).all()
+    for c in m.categories:
+        free_total = 0
+        for rank, spec in enumerate(LAYOUT.get(c.code, [])):
+            state = "0" * (spec.rows * spec.seats_per_row)
+            # Never free seats that belong to a live order (paid, being paid or awaiting 3-D Secure).
+            held = [pos for o in active_orders if o.block == spec.name for pos in o.positions]
+            if held:
+                chars = list(state)
+                for r, s in held:
+                    if 1 <= r <= spec.rows and 1 <= s <= spec.seats_per_row:
+                        chars[(r - 1) * spec.seats_per_row + s - 1] = "1"
+                state = "".join(chars)
+            sb = existing.get(spec.name)
+            if sb is None:
+                sb = SeatBlock(match_id=m.id, category_id=c.id, block=spec.name, block_index=spec.block_index, rank=rank,
+                               gate=spec.gate, rows=spec.rows, seats_per_row=spec.seats_per_row, state=state)
+                db.add(sb)
+            else:
+                sb.state = state
+            free_total += state.count("0")
+        c.capacity = c.available = free_total
+
+
+def reset_schedule(db: Session, rng: random.Random | None = None) -> None:
+    """Demo helper: put sale openings a few seconds/minutes in the future, restock, and
+    return every feed fixture to the 'not yet announced' pool."""
+    rng = rng or random.Random()
+    now = now_ms()
+    matches = db.scalars(select(Match).order_by(Match.id)).all()
+    pool_ids: set[int] = set()
+    i = 0
+    for m in matches:
+        if m.source in ("user", "import"):
+            # Buyer-added fixtures keep their own sale schedule; restock only while the sale hasn't opened.
+            if m.sale_date_tba or m.sale_opens_at_ms > now:
+                restock(db, m, rng)
+            continue
+        if (m.league_id, m.home_team, m.away_team) in POOL_KEYS:
+            # Seats are generated when the fixture is announced (see services/fixtures.py).
+            m.published_at_ms, m.sale_opens_at_ms = None, now + UNPUBLISHED_SALE_MS
+            pool_ids.add(m.id)
+            continue
+        restock(db, m, rng)
+        m.published_at_ms = m.published_at_ms or now - 7 * 86_400_000
+        m.sale_opens_at_ms = now + SALE_OFFSETS_S[i % len(SALE_OFFSETS_S)] * 1000 + (i * 1373) % 9000
+        i += 1
+    for w in db.scalars(select(Watch)).all():
+        if w.match_id in pool_ids:
+            db.delete(w)  # its fixture is no longer announced
+        elif w.status != "purchased":
+            w.status, w.message, w.order_id = "watching", "", None
+    db.commit()
