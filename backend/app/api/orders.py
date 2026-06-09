@@ -91,3 +91,60 @@ async def set_attendees(order_id: str, body: AttendeesIn, db: Session = Depends(
     return OrderOut.from_order(o)
 
 
+@router.get("/orders/{order_id}/calendar.ics")
+async def calendar(order_id: str, db: Session = Depends(get_db)) -> Response:
+    """Calendar entry for the match with seats and gate in the description."""
+    o = _get(db, order_id)
+    m = o.match
+    start = datetime.fromtimestamp(m.kickoff_ms / 1000, tz=timezone.utc)
+    end = start + timedelta(hours=2)
+    gates = start - timedelta(minutes=90)
+    fmt = "%Y%m%dT%H%M%SZ"
+
+    def esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+    desc = (
+        f"Order {o.id}\nBlock {o.block} - {describe(o.positions)}\n{o.gate}\n"
+        f"Gates open {gates.strftime('%H:%M')} UTC" + ("\nKick-off time to be confirmed" if m.kickoff_tbc else "")
+    )
+    ics = "\r\n".join([
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//KickOff Tickets//EN", "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        f"UID:{o.id}@kickoff-tickets",
+        f"DTSTAMP:{datetime.now(timezone.utc).strftime(fmt)}",
+        f"DTSTART:{start.strftime(fmt)}",
+        f"DTEND:{end.strftime(fmt)}",
+        f"SUMMARY:{esc(m.label)}",
+        f"LOCATION:{esc(f'{m.stadium}, {m.city}, {m.country}'.strip(', '))}",
+        f"DESCRIPTION:{esc(desc)}",
+        "BEGIN:VALARM", "TRIGGER:-PT3H", "ACTION:DISPLAY", f"DESCRIPTION:{esc(m.label)} today", "END:VALARM",
+        "END:VEVENT", "END:VCALENDAR", "",
+    ])
+    filename = f"{m.home_team}-v-{m.away_team}".replace(" ", "-") + ".ics"
+    return Response(ics, media_type="text/calendar", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/payments/webhook", include_in_schema=False)
+async def stripe_webhook(request: Request, stripe_signature: str | None = Header(None, alias="Stripe-Signature")):
+    if get_gateway().name != "stripe" or not settings.stripe_webhook_secret:
+        raise HTTPException(404, "Webhooks not configured")
+    payload = await request.body()
+    try:
+        event = stripe.Webhook.construct_event(payload, stripe_signature, settings.stripe_webhook_secret)
+    except (ValueError, stripe.SignatureVerificationError) as e:
+        raise HTTPException(400, "Invalid webhook signature") from e
+
+    pi = event["data"]["object"]
+    with SessionLocal() as db:
+        o = db.scalar(select(Order).where(Order.payment_id == pi["id"]))
+        if o is None or o.status not in ("pending", "requires_action"):
+            return {"received": True}
+        if event["type"] == "payment_intent.succeeded":
+            finalize_paid(db, o)
+        elif event["type"] == "payment_intent.payment_failed":
+            err = pi.get("last_payment_error") or {}
+            # Off-session charges needing 3DS emit payment_failed; the customer can still authenticate.
+            if err.get("code") != "authentication_required":
+                finalize_failed(db, o, err.get("message") or "Payment failed")
+    return {"received": True}
