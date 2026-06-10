@@ -103,3 +103,89 @@ async def update_watch(watch_id: int, body: WatchUpdate, db: Session = Depends(g
     publish_watch(w)
     return w
 
+
+@router.delete("/{watch_id}", status_code=204)
+async def delete_watch(watch_id: int, db: Session = Depends(get_db)) -> Response:
+    w = _get(db, watch_id)
+    if w.status in ("purchasing", "requires_action"):
+        raise HTTPException(409, "Purchase in progress")
+    sniper.disarm(w.id)
+    label = w.match.label
+    db.delete(w)
+    db.commit()
+    bus.publish("watch_removed", {"id": watch_id})
+    bus.log("info", f"Removed {label} from watchlist")
+    return Response(status_code=204)
+
+
+def _order_now(db: Session, w: Watch) -> Watch:
+    """Never makes the caller wait: buys in the background if on sale, otherwise pre-orders for T+0."""
+    if w.status in BUSY_STATUSES:
+        raise HTTPException(409, f"Already {w.status}")
+    if w.match.sale_opens_at_ms > now_ms():
+        w.mode, w.status = "auto", "watching"
+        w.message = (
+            "Pre-ordered: waiting for the sale date. Buys the instant tickets go on sale"
+            if w.match.sale_date_tba
+            else "Pre-ordered: buys the instant the sale opens"
+        )
+        db.commit()
+        publish_watch(w)
+        seats = f" (Block {w.exact_block}, {describe(w.exact_positions)})" if w.exact_block else ""
+        when = "as soon as the sale date is announced and opens" if w.match.sale_date_tba else "automatically at opening"
+        bus.log("info", f"⏱ Pre-order placed for {w.match.label}{seats}: fires {when}")
+        sniper.arm(w.id)
+    else:
+        sniper.disarm(w.id)
+        start_purchase(w.id, "manual")
+    return w
+
+
+@router.post("/quick-buy", response_model=WatchOut, status_code=202)
+async def quick_buy(body: QuickBuy, db: Session = Depends(get_db)) -> Watch:
+    """One click from a match card: create the watch if needed and order immediately."""
+    m = _published_match(db, body.match_id)
+    if body.seats:
+        zone = _validate_exact(db, m, body.seats)
+        codes = [zone.code]
+        max_price = zone.price_cents
+        quantity = len(body.seats.positions)
+    else:
+        codes = _clean_codes(body.category_codes) if body.category_codes is not None else DEFAULT_CODES
+        max_price = body.max_price_cents or _default_max_price(m, codes)
+        quantity = body.quantity
+    w = db.scalar(select(Watch).where(Watch.match_id == m.id))
+    if w is None:
+        w = Watch(match_id=m.id, mode="auto")
+        db.add(w)
+    if w.status not in BUSY_STATUSES:
+        # A click from the match page carries the buyer's current choice of seats/zones, budget and strategy.
+        w.quantity, w.strategy, w.max_price_cents = quantity, body.strategy, max_price
+        w.category_codes = codes
+        if body.seats:
+            w.exact_block, w.exact_row = body.seats.block, body.seats.positions[0][0]
+            w.exact_seats_csv = positions_csv(body.seats.positions)
+            w.exact_fallback = body.exact_fallback
+        else:
+            w.exact_block, w.exact_row, w.exact_seats_csv, w.exact_fallback = None, None, "", False
+        db.commit()
+        publish_watch(w)
+    return _order_now(db, w)
+
+
+@router.post("/{watch_id}/buy", response_model=WatchOut, status_code=202)
+async def buy_now(watch_id: int, db: Session = Depends(get_db)) -> Watch:
+    """BUY NOW from the watchlist. Returns 202 immediately; the result streams over /ws."""
+    return _order_now(db, _get(db, watch_id))
+
+
+@router.post("/{watch_id}/retry", response_model=WatchOut)
+async def retry(watch_id: int, db: Session = Depends(get_db)) -> Watch:
+    w = _get(db, watch_id)
+    if w.status in BUSY_STATUSES:
+        raise HTTPException(409, f"Cannot retry while {w.status}")
+    w.status, w.message, w.order_id = "watching", "", None
+    db.commit()
+    publish_watch(w)
+    sniper.arm(w.id)
+    return w
