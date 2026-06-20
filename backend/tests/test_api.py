@@ -172,3 +172,124 @@ def test_buy_exact_seats(client):
     m2 = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": oc["block"], "positions": [[row, s] for s in seats]}})
     assert m2.status_code in (409, 409)
 
+
+def test_exact_seats_validation(client):
+    m = future_match(client)
+    blocks = client.get(f"/api/matches/{m['id']}/seatmap").json()
+    b = blocks[0]
+    bad = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": "ZZZ", "positions": [[1, 1]]}})
+    assert bad.status_code == 422
+    bad = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": b["block"], "positions": [[999, 1]]}})
+    assert bad.status_code == 422
+    detail = client.get(f"/api/matches/{m['id']}/blocks/{b['block']}").json()
+    row, seats = _free_run(detail, 1)
+    ok = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": b["block"], "positions": [[row, s] for s in seats]}, "exact_fallback": True})
+    w = ok.json()
+    assert ok.status_code == 202 and w["exact_block"] == b["block"] and w["exact_positions"] == [[row, s] for s in seats]
+    assert w["exact_fallback"] is True and w["quantity"] == 1 and w["mode"] == "auto"
+
+
+def test_add_match_preorder_exact_seats_then_sale_announced(client):
+    """The core flow: a fixture not on sale (sale date TBA) → pick exact seats → pre-order → sale announced → bought."""
+    add_card(client)
+    teams = {t["name"]: t for t in client.get("/api/teams").json()}
+    assert teams["Real Madrid"]["stadium"] == "Santiago Bernabéu"
+
+    body = {"league_id": "LIGA", "home_team": "Real Madrid", "away_team": "Barcelona", "date": "2027-05-09", "time": "21:00"}
+    r = client.post("/api/matches", json=body)
+    assert r.status_code == 201, r.text
+    m = r.json()
+    assert m["sale_date_tba"] and m["source"] == "user" and m["famous_name"] == "El Clásico"
+    assert m["stadium"] == "Santiago Bernabéu" and m["timezone"] == "Europe/Madrid"
+    assert client.post("/api/matches", json=body).status_code == 200  # duplicate returns the existing fixture
+    assert any(x["id"] == m["id"] for x in client.get("/api/matches").json())
+
+    # Pick exact seats now, months before the sale.
+    blk = next(b for b in client.get(f"/api/matches/{m['id']}/seatmap").json() if b["zone_code"] == "MC")
+    row, seats = _free_run(client.get(f"/api/matches/{m['id']}/blocks/{blk['block']}").json(), 3)
+    w = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": blk["block"], "positions": [[row, s] for s in seats]}}).json()
+    assert w["mode"] == "auto" and w["status"] == "watching" and "sale date" in w["message"] and w["quantity"] == 3
+
+    # Club announces the sale; the engine fires at T+0 and buys exactly those seats.
+    a = client.post(f"/api/matches/{m['id']}/announce-sale", json={"opens_in_seconds": 5}).json()
+    assert a["sale_date_tba"] is False
+    o = _order(client, _wait(client, w["id"], timeout=15)["order_id"])
+    assert (o["status"], o["block"], o["row"], o["seats"]) == ("paid", blk["block"], row, seats)
+    assert o["latency_ms"] < 1000
+
+
+def test_add_match_validation(client):
+    bad = {"league_id": "LIGA", "home_team": "Real Madrid", "away_team": "Real Madrid", "date": "2027-05-09"}
+    assert client.post("/api/matches", json=bad).status_code == 422
+    assert client.post("/api/matches", json={**bad, "away_team": "Nobody FC"}).status_code == 422
+    assert client.post("/api/matches", json={**bad, "away_team": "Barcelona", "date": "2020-01-01"}).status_code == 422
+    tbc = client.post("/api/matches", json={**bad, "away_team": "Sevilla", "date": "2027-03-14"}).json()
+    assert tbc["kickoff_tbc"] is True
+
+
+def test_all_seats_free_before_sale_and_pick_any_seats(client):
+    add_card(client)
+    body = {"league_id": "UCL", "home_team": "Real Madrid", "away_team": "Liverpool", "date": "2027-03-10", "time": "21:00"}
+    r = client.post("/api/matches", json=body)
+    assert r.status_code == 201
+    m = r.json()
+    blocks = client.get(f"/api/matches/{m['id']}/seatmap").json()
+    assert all(b["free"] == b["rows"] * b["seats_per_row"] for b in blocks), "no seat may be sold before the sale"
+    assert all(c["available"] == c["capacity"] > 0 for c in m["categories"])
+
+    # Seats chosen one by one: not adjacent, different rows, same block.
+    picks = [[1, 3], [1, 9], [4, 15], [7, 2]]
+    w = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": "112", "positions": picks}}).json()
+    assert w["quantity"] == 4 and w["exact_positions"] == picks
+    client.post(f"/api/matches/{m['id']}/announce-sale", json={"opens_in_seconds": 5})
+    o = _order(client, _wait(client, w["id"], timeout=15)["order_id"])
+    assert o["status"] == "paid" and o["block"] == "112" and o["positions"] == picks and o["quantity"] == 4
+    state = client.get(f"/api/matches/{m['id']}/blocks/112").json()
+    spr = state["seats_per_row"]
+    assert all(state["state"][(r - 1) * spr + s - 1] == "1" for r, s in picks)
+    assert state["state"].count("1") >= 4
+
+
+def test_schedule_import_from_football_data(client, monkeypatch):
+    import httpx
+
+    from app.config import settings
+    from app.db import SessionLocal
+    from app.services import fixture_import
+
+    payload = {"matches": [
+        {"id": 900001, "utcDate": "2027-05-09T19:00:00Z", "status": "TIMED", "matchday": 35,
+         "homeTeam": {"id": 86, "shortName": "Real Madrid", "crest": "x"}, "awayTeam": {"id": 81, "shortName": "Barça", "crest": "y"}},
+        {"id": 900002, "utcDate": "2027-05-16T17:00:00Z", "status": "SCHEDULED", "matchday": 36,
+         "homeTeam": {"id": 4242, "shortName": "Elche", "crest": "https://crests.football-data.org/285.png"},
+         "awayTeam": {"id": 81, "shortName": "Barça", "crest": "y"}},
+    ]}
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"], seen["token"] = str(request.url), request.headers.get("X-Auth-Token")
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(settings, "football_data_api_key", "test-key")
+    with SessionLocal() as db:
+        res = fixture_import.import_league(db, "LIGA", client=httpx.Client(transport=httpx.MockTransport(handler)))
+        again = fixture_import.import_league(db, "LIGA", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert res == {"created": 2, "updated": 0} and again["created"] == 0
+    assert "/competitions/PD/matches" in seen["url"] and seen["token"] == "test-key"
+
+    ms = {(m["home_team"], m["away_team"]): m for m in client.get("/api/matches").json() if m["source"] == "import"}
+    clasico = ms[("Real Madrid", "Barcelona")]  # mapped to our names (crests, stadium)
+    assert clasico["stadium"] == "Santiago Bernabéu" and clasico["sale_date_tba"] and not clasico["kickoff_tbc"]
+    assert clasico["famous_name"] == "El Clásico" and clasico["round_label"] == "Matchday 35"
+    elche = ms[("Elche", "Barcelona")]  # unknown club keeps the API's name and crest
+    assert elche["home_crest_url"].endswith("285.png") and elche["kickoff_tbc"]
+
+
+def test_manage_paid_ticket_attendees_calendar_and_preorder(client):
+    add_card(client)
+    m = open_match(client)
+    r = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "quantity": 2, "category_codes": ["HE"]})
+    o = _order(client, _wait(client, r.json()["id"])["order_id"])
+    assert o["status"] == "paid" and o["paid_at_ms"] and o["attendees"] == []
+    (r1, s1), (r2, s2) = o["positions"]
+
