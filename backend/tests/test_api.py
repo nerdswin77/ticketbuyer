@@ -412,3 +412,49 @@ def test_order_before_opening_becomes_preorder(client):
     assert w["mode"] == "auto" and w["status"] == "watching"
     assert "Pre-ordered" in w["message"]
 
+
+def test_declined_card_releases_seats(client):
+    add_card(client, "4000000000000002")
+    m = open_match(client)
+    wid = _watch(client, m["id"], category_codes=["HE"])["id"]
+    before = _available(client, m["id"], "HE")
+    w, order = _buy(client, wid)
+    assert order["status"] == "failed"
+    assert "declined" in order["failure_reason"]
+    assert w["status"] == "failed"
+    assert _available(client, m["id"], "HE") == before
+
+
+def test_3ds_then_confirm(client):
+    add_card(client, "4000002500003155")
+    m = open_match(client)
+    w, order = _buy(client, _watch(client, m["id"])["id"])
+    assert w["status"] == "requires_action"
+    assert order["status"] == "requires_action" and order["client_secret"]
+    assert client.post(f"/api/orders/{order['id']}/confirm").json()["status"] == "paid"
+    assert client.get("/api/watches").json()[0]["status"] == "purchased"
+
+
+def test_price_limit(client):
+    add_card(client)
+    m = open_match(client)
+    w, order = _buy(client, _watch(client, m["id"], max_price_cents=100)["id"])
+    assert order is None
+    assert "price limit" in w["message"]
+
+
+def test_validation_and_guards(client):
+    m = future_match(client)
+    assert client.post("/api/watches", json={"match_ids": [m["id"]], "quantity": 7}).status_code == 422
+    assert client.post("/api/watches", json={"match_ids": [m["id"]], "category_codes": ["X9"]}).status_code == 422
+    assert client.post("/api/watches/quick-buy", json={"match_id": 99999}).status_code == 404
+    w = _watch(client, m["id"])
+    assert client.post("/api/watches", json={"match_ids": [m["id"]]}).json() == []  # duplicate ignored
+    upd = client.patch(f"/api/watches/{w['id']}", json={"mode": "auto", "quantity": 4}).json()
+    assert upd["mode"] == "auto" and upd["quantity"] == 4
+    bad_card = client.post(
+        "/api/payment-methods",
+        json={"mock_card": {"number": "4242424242424241", "exp_month": 1, "exp_year": 2035, "cvc": "123"}},
+    )
+    assert bad_card.status_code in (400, 409)
+    assert client.delete(f"/api/watches/{w['id']}").status_code == 204
