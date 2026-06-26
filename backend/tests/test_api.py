@@ -293,3 +293,122 @@ def test_manage_paid_ticket_attendees_calendar_and_preorder(client):
     assert o["status"] == "paid" and o["paid_at_ms"] and o["attendees"] == []
     (r1, s1), (r2, s2) = o["positions"]
 
+    upd = client.put(f"/api/orders/{o['id']}/attendees", json={"attendees": [{"row": r1, "seat": s1, "name": "  Ana García "}]})
+    assert upd.status_code == 200
+    assert upd.json()["attendees"] == [{"row": r1, "seat": s1, "name": "Ana García"}, {"row": r2, "seat": s2, "name": ""}]
+    bad = client.put(f"/api/orders/{o['id']}/attendees", json={"attendees": [{"row": 99, "seat": 99, "name": "X"}]})
+    assert bad.status_code == 422
+
+    ics = client.get(f"/api/orders/{o['id']}/calendar.ics")
+    assert ics.status_code == 200 and ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VEVENT" in ics.text and f"Block {o['block']}" in ics.text and m["stadium"].split()[0] in ics.text
+
+    # Pre-order management: toggle fallback, then cancel.
+    fut = future_match(client)
+    blk = client.get(f"/api/matches/{fut['id']}/seatmap").json()[3]
+    w = client.post("/api/watches/quick-buy", json={"match_id": fut["id"], "seats": {"block": blk["block"], "positions": [[2, 5]]}}).json()
+    assert client.patch(f"/api/watches/{w['id']}", json={"exact_fallback": True}).json()["exact_fallback"] is True
+    assert client.delete(f"/api/watches/{w['id']}").status_code == 204
+    assert all(x["id"] != w["id"] for x in client.get("/api/watches").json())
+
+
+def test_demo_reset_keeps_seats_of_paid_orders(client):
+    add_card(client)
+    m = open_match(client)
+    r = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "quantity": 2, "category_codes": ["OC"]})
+    o = _order(client, _wait(client, r.json()["id"])["order_id"])
+    assert o["status"] == "paid"
+
+    client.post("/api/demo/reset")  # regenerates every seat map
+
+    blk = client.get(f"/api/matches/{m['id']}/blocks/{o['block']}").json()
+    spr = blk["seats_per_row"]
+    assert all(blk["state"][(r - 1) * spr + s - 1] == "1" for r, s in o["positions"]), "paid seats must stay sold"
+    again = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": o["block"], "positions": o["positions"]}})
+    assert again.status_code == 409  # nobody can buy them a second time
+
+
+def test_favorite_leagues(client):
+    r = client.put("/api/profile/favorites", json={"leagues": ["LIGA", "BRA", "LIGA"]})
+    assert r.status_code == 200 and r.json()["favorite_leagues"] == ["LIGA", "BRA"]
+    assert client.get("/api/profile").json()["favorite_leagues"] == ["LIGA", "BRA"]
+    assert client.put("/api/profile/favorites", json={"leagues": ["NOPE"]}).status_code == 422
+    assert client.put("/api/profile/favorites", json={"leagues": []}).json()["favorite_leagues"] == []
+
+
+def test_cheapest_strategy(client):
+    add_card(client)
+    m = open_match(client)
+    r = client.post(
+        "/api/watches/quick-buy",
+        json={"match_id": m["id"], "quantity": 1, "strategy": "cheapest", "category_codes": ["MC", "HE", "CU"]},
+    )
+    assert r.status_code == 202
+    w = _wait(client, r.json()["id"])
+    assert w["strategy"] == "cheapest"
+    assert _order(client, w["order_id"])["category_code"] == "CU"
+
+
+def test_default_zones_exclude_hospitality(client):
+    m = future_match(client)
+    w = _watch(client, m["id"])
+    assert "VIP" not in w["category_codes"] and len(w["category_codes"]) == 7
+    assert w["max_price_cents"] == next(z["price_cents"] for z in m["categories"] if z["code"] == "MC")
+
+
+def test_test_card_is_seeded(client):
+    assert not client.get("/api/profile").json()["has_payment_method"]
+    with SessionLocal() as db:
+        assert ensure_test_payment_method(db) is True
+        assert ensure_test_payment_method(db) is False  # idempotent
+    p = client.get("/api/profile").json()
+    assert p["has_payment_method"] and p["card_last4"] == "4242" and p["card_brand"] == "visa"
+
+
+def test_buy_requires_payment_method(client):
+    m = open_match(client)
+    w, order = _buy(client, _watch(client, m["id"])["id"])
+    assert order is None
+    assert w["status"] == "failed"
+    assert "payment method" in w["message"]
+
+
+def test_successful_purchase_and_refund(client):
+    add_card(client)
+    m = open_match(client)
+    wid = _watch(client, m["id"], category_codes=["MW", "MC"])["id"]
+    before = _available(client, m["id"], "MC")
+
+    w, order = _buy(client, wid)
+    assert order["status"] == "paid"
+    assert order["category_code"] == "MC"  # strategy "best": the better-positioned zone wins
+    assert order["total_cents"] == order["unit_price_cents"] * 2
+    assert w["status"] == "purchased"
+    assert _available(client, m["id"], "MC") == before - 2
+
+    assert client.post(f"/api/watches/{wid}/buy").status_code == 409  # cannot buy twice
+
+    refunded = client.post(f"/api/orders/{order['id']}/refund").json()
+    assert refunded["status"] == "refunded"
+    assert _available(client, m["id"], "MC") == before
+
+
+def test_quick_buy_from_match_card(client):
+    add_card(client)
+    m = open_match(client)
+    r = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "quantity": 3})
+    assert r.status_code == 202, r.text
+    w = _wait(client, r.json()["id"])
+    order = _order(client, w["order_id"])
+    assert order["status"] == "paid" and order["quantity"] == 3 and order["trigger"] == "manual"
+
+
+def test_order_before_opening_becomes_preorder(client):
+    add_card(client)
+    m = future_match(client)
+    r = client.post("/api/watches/quick-buy", json={"match_id": m["id"]})
+    assert r.status_code == 202
+    w = r.json()
+    assert w["mode"] == "auto" and w["status"] == "watching"
+    assert "Pre-ordered" in w["message"]
+
