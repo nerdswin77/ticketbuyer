@@ -90,3 +90,117 @@ export interface ScheduleInfo {
   interval_s?: number;
 }
 
+export interface Watch {
+  id: number;
+  match_id: number;
+  mode: WatchMode;
+  strategy: Strategy;
+  quantity: number;
+  max_price_cents: number;
+  category_codes: string[];
+  exact_block: string | null;
+  /** Exact seats chosen one by one: [row, seat] pairs. */
+  exact_positions: Position[];
+  exact_fallback: boolean;
+  status: WatchStatus;
+  message: string;
+  order_id: string | null;
+  created_at_ms: number;
+}
+
+export interface Order {
+  id: string;
+  watch_id: number | null;
+  match_id: number;
+  match_label: string;
+  category_code: string;
+  category_name: string;
+  quantity: number;
+  unit_price_cents: number;
+  total_cents: number;
+  currency: string;
+  status: OrderStatus;
+  gateway: Gateway;
+  payment_id: string | null;
+  failure_reason: string;
+  latency_ms: number | null;
+  trigger: 'auto' | 'manual';
+  created_at_ms: number;
+  stand: Stand;
+  block: string;
+  row: number;
+  seats: number[];
+  positions: Position[];
+  gate: string;
+  block_index: number;
+  attendees: Attendee[];
+  paid_at_ms: number | null;
+  updated_at_ms: number;
+  client_secret: string | null;
+  payment_method_id: string | null;
+}
+
+export interface Team {
+  name: string;
+  stadium: string;
+  city: string;
+  leagues: string[];
+}
+
+export interface BlockSummary {
+  block: string;
+  zone_code: string;
+  block_index: number;
+  rank: number;
+  gate: string;
+  rows: number;
+  seats_per_row: number;
+  free: number;
+}
+
+export interface BlockDetail extends BlockSummary {
+  /** One char per seat, row-major: '0' free, '1' sold/held. */
+  state: string;
+}
+
+export interface Attendee {
+  row: number;
+  seat: number;
+  name: string;
+}
+
+/** [row, seat] */
+export type Position = [number, number];
+
+export interface SeatSelection {
+  block: string;
+  positions: Position[];
+}
+
+export interface LogEntry {
+  ts: number;
+  level: LogLevel;
+  message: string;
+}
+
+export interface MockCard {
+  number: string;
+  exp_month: number;
+  exp_year: number;
+  cvc: string;
+  name: string;
+}
+
+export type ServerEvent =
+  | { type: 'log'; data: LogEntry }
+  | { type: 'watch'; data: Watch }
+  | { type: 'watch_removed'; data: { id: number } }
+  | { type: 'order'; data: Order }
+  | { type: 'inventory'; data: Record<string, number> }
+  | { type: 'sale_open'; data: { watch_id: number; match_id: number; label: string } }
+  | { type: 'matches_reset'; data: Record<string, never> }
+  | { type: 'fixture_published'; data: { match: Match; pending: number; next_publish_at_ms: number | null } }
+  | { type: 'schedule'; data: ScheduleInfo }
+  | { type: 'seats'; data: { match_id: number; block: string } }
+  | { type: 'match_added'; data: Match }
+  | { type: 'sale_announced'; data: Match };
