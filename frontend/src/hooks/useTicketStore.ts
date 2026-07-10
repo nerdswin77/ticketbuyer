@@ -110,3 +110,98 @@ function reducer(state: State, action: Action): State {
   }
 }
 
+async function loadAll(): Promise<Data> {
+  const t0 = Date.now();
+  const [config, leagues, matches, watches, orders, profile, logs, schedule] = await Promise.all([
+    api.config(),
+    api.leagues(),
+    api.matches(),
+    api.watches(),
+    api.orders(),
+    api.profile(),
+    api.logs(),
+    api.schedule(),
+  ]);
+  const rtt = Date.now() - t0;
+  return {
+    config,
+    clockOffset: config.server_time_ms + rtt / 2 - Date.now(),
+    leagues,
+    matches,
+    watches,
+    orders,
+    profile,
+    logs: logs.slice().reverse(),
+    schedule,
+    announcements: [],
+  };
+}
+
+export function useTicketStore() {
+  const [state, dispatch] = useReducer(reducer, { data: null, error: null });
+  // Latest state for event side effects (alert preferences) without re-subscribing the socket.
+  const latest = useRef(state);
+  latest.current = state;
+
+  const log = useCallback((level: LogLevel, message: string) => {
+    dispatch({ type: 'log', entry: { ts: Date.now(), level, message } });
+  }, []);
+
+  const reload = useCallback(async () => {
+    try {
+      dispatch({ type: 'loaded', data: await loadAll() });
+    } catch (err) {
+      dispatch({ type: 'load_failed', error: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const onEvent = useCallback(
+    (e: ServerEvent) => {
+      if (e.type === 'matches_reset') {
+        void reload();
+        return;
+      }
+      if (e.type === 'fixture_published') {
+        const p = latest.current.data?.profile;
+        const m = e.data.match;
+        if (p && wantsAlert(p, m.league_id)) {
+          beep(784, 0.14, 3);
+          const secs = Math.max(0, Math.round((m.sale_opens_at_ms - (m.published_at_ms ?? Date.now())) / 1000));
+          notify('📅 New fixture announced', `${m.home_team} v ${m.away_team}: tickets on sale in ${Math.floor(secs / 60)}m ${secs % 60}s. Pre-order now.`);
+        }
+      }
+      if (e.type === 'sale_announced') {
+        const m = e.data;
+        const hasOrder = latest.current.data?.watches.some((w) => w.match_id === m.id);
+        beep(880, 0.16, hasOrder ? 4 : 2);
+        const secs = Math.max(0, Math.round((m.sale_opens_at_ms - Date.now()) / 1000));
+        notify(
+          '📣 Ticket sale date announced',
+          `${m.home_team} v ${m.away_team}: on sale in ${Math.floor(secs / 60)}m ${secs % 60}s.` +
+            (hasOrder ? ' Your pre-order is armed.' : ' Pre-order now.'),
+        );
+      }
+      if (e.type === 'sale_open') {
+        beep(988, 0.18, 5);
+        notify('🎟 Tickets ON SALE', `${e.data.label}: click BUY NOW`);
+      }
+      if (e.type === 'order') {
+        const o = e.data;
+        if (o.status === 'paid') {
+          beep(1320, 0.1, 2);
+          notify('✅ Tickets secured!', `${o.match_label}: ${o.quantity}× ${o.category_code} ${money(o.total_cents, o.currency)}`);
+        } else if (o.status === 'failed') notify('❌ Purchase failed', `${o.match_label}: ${o.failure_reason}`);
+        else if (o.status === 'requires_action') {
+          beep(700, 0.2, 3);
+          notify('⚠ Approve your payment', `${o.match_label}: your bank needs confirmation`);
+        }
+      }
+      dispatch({ type: 'event', event: e });
+    },
+    [reload],
+  );
+
