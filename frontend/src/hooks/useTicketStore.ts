@@ -205,3 +205,90 @@ export function useTicketStore() {
     [reload],
   );
 
+  const connected = useLiveEvents(onEvent, reload);
+
+  /** Wrap an API call: surface errors in the log instead of throwing. */
+  const run = useCallback(
+    async <T,>(fn: () => Promise<T>, failMsg: string): Promise<T | undefined> => {
+      try {
+        return await fn();
+      } catch (err) {
+        log('error', `${failMsg}: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
+    },
+    [log],
+  );
+
+  const actions = useMemo(
+    () => ({
+      reload,
+      log,
+      setProfile: (profile: Profile) => dispatch({ type: 'profile', profile }),
+      /** Optimistic: the star toggles instantly, the server copy is authoritative. */
+      setFavorites: async (current: Profile, leagues: string[]) => {
+        dispatch({ type: 'profile', profile: { ...current, favorite_leagues: leagues } });
+        const p = await run(() => api.setFavorites(leagues), 'Could not save favourites');
+        dispatch({ type: 'profile', profile: p ?? current });
+      },
+      setOrder: (order: Order) => dispatch({ type: 'order', order }),
+      watchMatches: async (body: Parameters<typeof api.createWatches>[0]) => {
+        const created = await run(() => api.createWatches(body), 'Could not add to watchlist');
+        if (created) dispatch({ type: 'watches', watches: created });
+        return created;
+      },
+      updateWatch: async (id: number, body: Parameters<typeof api.updateWatch>[1]) => {
+        const w = await run(() => api.updateWatch(id, body), 'Could not update watch');
+        if (w) dispatch({ type: 'watches', watches: [w] });
+      },
+      removeWatch: (id: number) => run(() => api.deleteWatch(id), 'Could not remove watch'),
+      buy: async (id: number) => {
+        const w = await run(() => api.buy(id), 'Order failed');
+        if (w) dispatch({ type: 'watches', watches: [w] });
+      },
+      quickBuy: async (matchId: number, opts: BuyOptions) => {
+        const w = await run(() => api.quickBuy(matchId, opts), 'Order failed');
+        if (w) dispatch({ type: 'watches', watches: [w] });
+      },
+      retry: (id: number) => run(() => api.retry(id), 'Retry failed'),
+      refund: async (orderId: string) => {
+        const o = await run(() => api.refundOrder(orderId), 'Refund failed');
+        if (o) dispatch({ type: 'order', order: o });
+      },
+      confirm: async (orderId: string) => {
+        const o = await run(() => api.confirmOrder(orderId), 'Payment confirmation failed');
+        if (o) dispatch({ type: 'order', order: o });
+      },
+      resetDemo: () => run(() => api.resetDemo(), 'Reset failed'),
+      publishNext: () => run(() => api.publishNext(), 'Could not announce fixture'),
+      addMatch: async (body: Parameters<typeof api.addMatch>[0]) => {
+        const m = await api.addMatch(body); // errors are shown in the form
+        dispatch({ type: 'event', event: { type: 'match_added', data: m } });
+        return m;
+      },
+      setAttendees: async (orderId: string, attendees: Parameters<typeof api.setAttendees>[1]) => {
+        const o = await run(() => api.setAttendees(orderId, attendees), 'Could not save ticket holders');
+        if (o) dispatch({ type: 'order', order: o });
+        return !!o;
+      },
+      importSchedule: async () => {
+        const r = await run(() => api.importSchedule(), 'Schedule import failed');
+        if (r) await reload();
+      },
+      announceSale: async (matchId: number, seconds: number) => {
+        const m = await run(() => api.announceSale(matchId, seconds), 'Could not announce sale');
+        if (m) dispatch({ type: 'event', event: { type: 'sale_announced', data: m } });
+      },
+      setPreferences: async (prefs: Parameters<typeof api.setPreferences>[0]) => {
+        const p = await run(() => api.setPreferences(prefs), 'Could not save alert settings');
+        if (p) dispatch({ type: 'profile', profile: p });
+        return p;
+      },
+    }),
+    [reload, log, run],
+  );
+
+  return { ...state, connected, actions };
+}
+
+export type StoreActions = ReturnType<typeof useTicketStore>['actions'];
