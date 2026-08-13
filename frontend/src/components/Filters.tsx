@@ -99,3 +99,71 @@ export function Filters({ leagues, matches, countMatches, watches, favorites, va
         </div>
       </section>
 
+      <section className="side-card">
+        <div className="side-head">
+          <h2>Competitions</h2>
+          <button
+            className="link small"
+            onClick={() => onChange({ ...value, leagues: allOn ? new Set() : new Set(leagues.map((l) => l.id)) })}
+          >
+            {allOn ? 'Clear all' : 'Select all'}
+          </button>
+        </div>
+
+        <div className="side-sub fav-head">
+          <span>★ My favourites</span>
+          {favorites.length > 0 && (
+            <button className="link small" onClick={() => onChange({ ...value, leagues: new Set(favorites) })}>
+              Show only these
+            </button>
+          )}
+        </div>
+        {favorites.length === 0 ? (
+          <p className="fav-empty">Tap ☆ next to a competition to pin it here. Favourites appear first in the match list.</p>
+        ) : (
+          <ul className="league-list">{favorites.map((id) => byId.get(id)).filter((l): l is League => !!l).map(row)}</ul>
+        )}
+
+        {GROUPS.map((g) => {
+          const items = leagues.filter((l) => (LEAGUE_BRAND[l.id]?.region ?? 'europe') === g.region && !favSet.has(l.id));
+          if (!items.length) return null;
+          return (
+            <div key={g.region}>
+              <div className="side-sub">{g.label}</div>
+              <ul className="league-list">{items.map(row)}</ul>
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="side-card">
+        <h2>Quick filters</h2>
+        <label className="switch-row">
+          <span>
+            <span className="switch-label">Favourites only</span>
+            <span className="switch-hint">{favorites.length ? `${favorites.length} competitions starred` : 'Star competitions first'}</span>
+          </span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={value.favoritesOnly}
+            disabled={!favorites.length}
+            onChange={(e) => onChange({ ...value, favoritesOnly: e.target.checked })}
+          />
+        </label>
+        <label className="switch-row">
+          <span>
+            <span className="switch-label">Big matches only</span>
+            <span className="switch-hint">Derbies and famous rivalries</span>
+          </span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={value.famousOnly}
+            onChange={(e) => onChange({ ...value, famousOnly: e.target.checked })}
+          />
+        </label>
+      </section>
+    </aside>
+  );
+}
