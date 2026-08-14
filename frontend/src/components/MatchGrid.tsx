@@ -95,3 +95,136 @@ export function MatchGrid(p: Props) {
         </button>
       </div>
 
+      {groups.length === 0 ? (
+        <div className="empty">
+          {p.availability === 'soldout'
+            ? 'No sold-out matches for these filters.'
+            : 'No matches with seats on sale right now for these competitions.'}
+          <div className="empty-cta">
+            Matches whose sale hasn't started are on the Schedule page, where you can pre-order seats.{' '}
+            <button className="primary" onClick={p.onGoSchedule}>
+              📅 Go to Schedule
+            </button>
+          </div>
+        </div>
+      ) : (
+        groups.map(({ league, matches }) => (
+          <section key={league.id} className="league-section">
+            <div className="league-head">
+              <h3>
+                <LeagueLogo leagueId={league.id} size={32} />
+                <span>{league.name}</span>
+                <span className="league-pill">{matches.length} matches</span>
+                <button
+                  className={`fav-star ${p.favorites.includes(league.id) ? 'on' : ''}`}
+                  onClick={() => p.onToggleFavorite(league.id)}
+                  aria-pressed={p.favorites.includes(league.id)}
+                  title={p.favorites.includes(league.id) ? 'Remove from favourites' : 'Add to favourites'}
+                >
+                  {p.favorites.includes(league.id) ? '★' : '☆'}
+                </button>
+              </h3>
+              {(() => {
+                const ids = matches.map((m) => m.id);
+                const allSelected = ids.every((id) => p.selected.has(id));
+                return (
+                  <button
+                    className="link small"
+                    onClick={() => (allSelected ? p.onUnselectMany(ids) : p.onSelectMany(ids))}
+                  >
+                    {allSelected ? 'Unselect all' : 'Select all'}
+                  </button>
+                );
+              })()}
+            </div>
+            <div className="grid">
+              {matches.map((m) => (
+                <MatchCard
+                  key={m.id}
+                  match={m}
+                  selected={p.selected.has(m.id)}
+                  watch={p.watchByMatch.get(m.id)}
+                  isNew={p.newIds.has(m.id)}
+                  onToggle={p.onToggle}
+                  onBuy={p.onQuickBuy}
+                  onOpen={p.onOpen}
+                />
+              ))}
+            </div>
+          </section>
+        ))
+      )}
+    </main>
+  );
+}
+
+/** Memoised: re-renders only when this match, its watch or its selection changes (callbacks are stable). */
+const MatchCard = memo(function MatchCard({
+  match: m,
+  selected,
+  watch,
+  isNew,
+  onToggle: toggleById,
+  onBuy: buyMatch,
+  onOpen: openMatch,
+}: {
+  match: Match;
+  selected: boolean;
+  isNew: boolean;
+  watch: Watch | undefined;
+  onToggle: (id: number) => void;
+  onBuy: (m: Match) => void;
+  onOpen: (m: Match) => void;
+}) {
+  const onToggle = () => toggleById(m.id);
+  const onBuy = () => buyMatch(m);
+  const onOpen = () => openMatch(m);
+  const prices = m.categories.filter((c) => c.code !== 'VIP').map((c) => c.price_cents);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`card ${selected ? 'sel' : ''} ${watch ? 'watched' : ''}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      aria-label={`${m.home_team} vs ${m.away_team}: view details and seats`}
+    >
+      {isNew && <span className="new-ribbon">NEW</span>}
+      <div className="card-top">
+        <span className="date-chip">{inZone(m.kickoff_ms, m.timezone, { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+        <span className="round">{m.round_label}</span>
+        <button
+          className={`check ${selected ? 'on' : ''}`}
+          aria-pressed={selected}
+          aria-label={selected ? 'Unselect match' : 'Select match'}
+          title="Select for bulk watch"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+        >
+          {selected ? '✓' : ''}
+        </button>
+      </div>
+
+      <div className="fixture">
+        <div className="side">
+          <TeamCrest team={m.home_team} size={60} url={m.home_crest_url} />
+          <span className="team-name">{m.home_team}</span>
+        </div>
+        <div className="vs">
+          <span className="ko-time">{m.kickoff_tbc ? 'TBC' : inZone(m.kickoff_ms, m.timezone, { hour: '2-digit', minute: '2-digit' })}</span>
+          <span className="tz">{m.kickoff_tbc ? 'kick-off time' : zoneAbbr(m.kickoff_ms, m.timezone)}</span>
+          <span className="vs-label">VS</span>
+        </div>
+        <div className="side">
+          <TeamCrest team={m.away_team} size={60} url={m.away_crest_url} />
+          <span className="team-name">{m.away_team}</span>
+        </div>
+      </div>
+
