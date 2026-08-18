@@ -228,3 +228,65 @@ const MatchCard = memo(function MatchCard({
         </div>
       </div>
 
+      {m.famous_name && (
+        <div className="famous">
+          <span className="tag tag-hot">🔥 {m.famous_name}</span>
+        </div>
+      )}
+      <div className="venue">
+        🏟 {m.stadium} · {m.city}
+      </div>
+
+      <div className="card-foot">
+        <span className="price">
+          <b>{money(Math.min(...prices))}</b> – <b>{money(Math.max(...prices))}</b>
+          <small> by seat position</small>
+        </span>
+        <SaleBadge match={m} />
+      </div>
+      <div className="card-actions">
+        <button
+          className="ghost-outline"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
+          Seats &amp; details
+        </button>
+        <BuyButton match={m} watch={watch} onBuy={onBuy} />
+      </div>
+    </div>
+  );
+});
+
+export function BuyButton({ match: m, watch: w, onBuy }: { match: Match; watch: Watch | undefined; onBuy: () => void }) {
+  const now = useNow();
+  const open = now >= m.sale_opens_at_ms;
+
+  let label: string;
+  let cls = '';
+  let disabled = false;
+  if (w?.status === 'purchased') [label, disabled, cls] = ['✓ Bought', true, 'done'];
+  else if (w?.status === 'purchasing') [label, disabled] = ['Buying…', true];
+  else if (w?.status === 'requires_action') [label, disabled] = ['Approve payment', true];
+  else if (open && totalAvailable(m) === 0) [label, disabled] = ['Sold out', true];
+  else if (!open && w?.mode === 'auto' && (w.status === 'watching' || w.status === 'armed'))
+    [label, disabled, cls] = [w.status === 'armed' ? '⚡ Armed' : '⏱ Pre-ordered', true, 'queued'];
+  else if (open) [label, cls] = ['⚡ Buy now', 'primary'];
+  else [label, cls] = ['⏱ Pre-order', 'preorder'];
+
+  return (
+    <button
+      className={`card-buy ${cls}`}
+      disabled={disabled}
+      title={open ? 'Buy the best seats available within the default zones' : 'Queue an order that fires the instant the sale opens'}
+      onClick={(e) => {
+        e.stopPropagation();
+        onBuy();
+      }}
+    >
+      {label}
+    </button>
+  );
+}
