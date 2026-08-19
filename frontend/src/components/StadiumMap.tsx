@@ -107,3 +107,87 @@ function StadiumMapImpl({
           <rect x="274" y="112" width="26" height="60" />
         </g>
 
+        {zones.map((z) => {
+          const shapes = SHAPES[z.code];
+          if (!shapes) return null;
+          const soldOut = !highlight && saleOpen && z.available === 0;
+          const isSel = selected.has(z.code);
+          const dim = highlight ? z.code !== highlight.code : selected.size > 0 && !isSel;
+          const interactive = !readOnly && !soldOut;
+          const label = `${z.name}: ${money(z.price_cents)}${soldOut ? ' (sold out)' : saleOpen ? ` (${z.available} left)` : ''}`;
+          return (
+            <g
+              key={z.code}
+              className={`zone ${isSel ? 'sel' : ''} ${dim ? 'dim' : ''} ${soldOut ? 'soldout' : ''} ${hovered === z.code ? 'hover' : ''}`}
+              onClick={interactive ? () => onToggle?.(z.code) : undefined}
+              onMouseEnter={() => onHover?.(z.code)}
+              onMouseLeave={() => onHover?.(null)}
+              role={interactive ? 'button' : undefined}
+              tabIndex={interactive ? 0 : -1}
+              aria-pressed={interactive ? isSel : undefined}
+              aria-label={label}
+              onKeyDown={(e) => interactive && (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onToggle?.(z.code))}
+            >
+              <title>{label}</title>
+              {shapes.map((s, i) => {
+                const other = highlight && z.code === highlight.code && i !== highlight.blockIndex;
+                const mine = highlight && z.code === highlight.code && i === highlight.blockIndex;
+                return (
+                  <rect
+                    key={i}
+                    x={s.x}
+                    y={s.y}
+                    width={s.w}
+                    height={s.h}
+                    rx={s.rx ?? 6}
+                    className={mine ? 'mine' : other ? 'other-block' : undefined}
+                    fill={soldOut ? undefined : colors.get(z.code)}
+                  />
+                );
+              })}
+              {!compact &&
+                shapes.map((s, i) => (
+                  <text key={`t${i}`} x={s.x + s.w / 2} y={s.y + s.h / 2 + 4} textAnchor="middle" className="zone-code">
+                    {z.code}
+                  </text>
+                ))}
+            </g>
+          );
+        })}
+
+        {pinShape && (
+          <g className="seat-pin" transform={`translate(${pinShape.x + pinShape.w / 2} ${pinShape.y + pinShape.h / 2})`}>
+            <circle r="16" className="pin-pulse" />
+            <circle r="9" className="pin-dot" />
+            {highlight?.label && !compact && (
+              <g transform={`translate(0 ${pinShape.y > 150 ? -26 : 30})`}>
+                <rect x={-48} y={-10} width={96} height={20} rx={10} className="pin-label-bg" />
+                <text textAnchor="middle" y={4} className="pin-label">
+                  {highlight.label}
+                </text>
+              </g>
+            )}
+          </g>
+        )}
+      </svg>
+
+      {!compact && (
+        <>
+          <div className="map-caption">
+            <span>◀ HE · {homeTeam} home end</span>
+            <span>Main stand &amp; dugouts ▼</span>
+            <span>{awayTeam} fans · AE ▶</span>
+          </div>
+          {!highlight && (
+            <div className="map-legend">
+              <span>Cheaper</span>
+              <span className="legend-bar" style={{ background: `linear-gradient(90deg, ${heat(0)}, ${heat(0.5)}, ${heat(1)})` }} />
+              <span>Pricier</span>
+              <span className="legend-sold">Sold out</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
