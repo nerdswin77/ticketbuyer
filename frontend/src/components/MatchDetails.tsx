@@ -224,3 +224,115 @@ export function MatchDetails(p: Props) {
         </div>
       </div>
 
+      {/* ------------------------------------------------ facts */}
+      <div className="md-facts">
+        <Fact icon="📅" title="Date & kick-off">
+          {inZone(m.kickoff_ms, venueTz, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} {tzShort}
+          <small>
+            {sameZone
+              ? 'Local stadium time (same as yours)'
+              : `Your time: ${inZone(m.kickoff_ms, localZone(), { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`}
+          </small>
+        </Fact>
+        <Fact icon="🏟" title="Venue">
+          {m.stadium}
+          <small>
+            {m.city}, {m.country} · {m.capacity.toLocaleString()} seats
+          </small>
+        </Fact>
+        <Fact icon="🚪" title="Gates open">
+          {inZone(m.kickoff_ms - GATES_OPEN_MIN * 60_000, venueTz, { hour: '2-digit', minute: '2-digit' })} {tzShort}
+          <small>{GATES_OPEN_MIN} min before kick-off; arrive early for security checks</small>
+        </Fact>
+        <Fact icon="🎟" title="Ticket sale">
+          {m.sale_date_tba ? (
+            <>
+              <span className="warn">Sale date not announced yet</span>
+              <small>Pre-order now: your order is bought automatically the moment tickets go on sale.</small>
+              <span className="demo-announce">
+                <small>Demo: simulate the club announcing the sale</small>
+                <button className="mini" onClick={() => p.onAnnounceSale(m.id, 60)}>
+                  Opens in 1 min
+                </button>
+                <button className="mini" onClick={() => p.onAnnounceSale(m.id, 300)}>
+                  5 min
+                </button>
+              </span>
+            </>
+          ) : (
+            <>
+              {saleOpen ? (totalLeft ? <span className="ok">On sale · {totalLeft} seats left</span> : <span className="bad">Sold out</span>) : <span className="warn">Opens in {countdown(m.sale_opens_at_ms - now)}</span>}
+              <small>
+                {saleOpen ? 'Opened' : 'Opens'} {inZone(m.sale_opens_at_ms, localZone(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })} (your time)
+              </small>
+            </>
+          )}
+        </Fact>
+        <Fact icon="📍" title="Getting there">
+          <a href={mapsUrl} target="_blank" rel="noreferrer">
+            Open in Google Maps ↗
+          </a>
+          <small>Public transport recommended; roads close around the stadium on matchday</small>
+        </Fact>
+        <Fact icon="📋" title="Ticket rules">
+          Up to {p.maxTickets} tickets per order
+          <small>Personal tickets: each holder's name is printed and ID may be checked. Mobile tickets arrive 48 h before kick-off.</small>
+        </Fact>
+      </div>
+
+      {/* ------------------------------------------------ your seats */}
+      {mySeats && p.order && (
+        <div className="my-seats">
+          <span className="my-seats-icon">🎟</span>
+          <div className="grow">
+            <b>{p.order.status === 'paid' ? 'Your seats' : 'Seats held for you'}</b>
+            <span>
+              {p.order.category_name} · Block <b>{p.order.block}</b> · <b>{formatPositions(p.order.positions)}</b> ·{' '}
+              {p.order.gate}
+            </span>
+          </div>
+          <button className="primary" onClick={() => p.order && p.onViewTicket(p.order)}>
+            View ticket
+          </button>
+        </div>
+      )}
+
+      {/* ------------------------------------------------ seating */}
+      <h3 className="md-h">{mySeats ? 'Where you are sitting' : 'Choose where to sit'}</h3>
+
+      {showMine && p.order ? (
+        <div className="md-seating">
+          <StadiumMap zones={zones} homeTeam={m.home_team} awayTeam={m.away_team} highlight={mapHighlight} readOnly />
+          <div className="exact-panel">
+            <div className="exact-title">
+              Block <b>{p.order.block}</b> · <b>{formatPositions(p.order.positions)}</b>
+              <span className="muted"> · {p.order.gate}</span>
+            </div>
+            {detail && detail.block === p.order.block ? (
+              <SeatGrid detail={detail} color={colors.get(p.order.category_code) ?? '#64748b'} mine={p.order.positions} readOnly />
+            ) : (
+              <div className="seat-grid-loading">Loading seats…</div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="pick-tabs" role="tablist">
+            <button role="tab" aria-selected={pickMode === 'zones'} className={pickMode === 'zones' ? 'on' : ''} onClick={() => setPickMode('zones')} disabled={locked}>
+              Best available
+              <small>Choose zones; the engine picks the best adjacent seats</small>
+            </button>
+            <button role="tab" aria-selected={pickMode === 'exact'} className={pickMode === 'exact' ? 'on' : ''} onClick={() => setPickMode('exact')} disabled={locked}>
+              🎯 Pick exact seats
+              <small>Choose block, row and seat numbers yourself</small>
+            </button>
+          </div>
+          <p className="md-sub">
+            {pickMode === 'zones'
+              ? 'Prices depend on position: halfway-line seats cost the most, upper corners the least. Click zones on the map or in the list.'
+              : `Choose a zone and a block, then click the seats you want one by one, in any rows (click again to remove). Each seat is one ticket, up to ${p.maxTickets}. Row 1 is nearest the pitch.`}{' '}
+            <b>{m.away_team}</b> supporters must buy in the Away End (AE).
+          </p>
+        </>
+      )}
+
