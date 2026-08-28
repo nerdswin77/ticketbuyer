@@ -336,3 +336,120 @@ export function MatchDetails(p: Props) {
         </>
       )}
 
+      {!(showMine) && pickMode === 'exact' && (
+        <div className="md-seating">
+          <StadiumMap
+            zones={zones}
+            selected={exactSelectedSet}
+            hovered={hovered}
+            saleOpen={saleOpen}
+            homeTeam={m.home_team}
+            awayTeam={m.away_team}
+            onToggle={chooseExactZone}
+            onHover={setHovered}
+            highlight={mapHighlight}
+            readOnly={locked}
+          />
+          <div className="exact-panel">
+            <div className="zone-pills" role="group" aria-label="Zone">
+              {zones.map((z) => (
+                <button key={z.code} className={`zone-pill ${z.code === exactZone ? 'on' : ''}`} onClick={() => chooseExactZone(z.code)} disabled={locked}>
+                  <i style={{ background: colors.get(z.code) }} />
+                  {z.code} <b>{money(z.price_cents)}</b>
+                </button>
+              ))}
+            </div>
+            {exactZoneCat && <div className="exact-zone-name">{exactZoneCat.name}: {exactZoneCat.description}</div>}
+            <div className="block-pills" role="group" aria-label="Block">
+              {zoneBlocks.length === 0 && <span className="muted small">Loading blocks…</span>}
+              {zoneBlocks.map((b) => (
+                <button
+                  key={b.block}
+                  className={`block-pill ${b.block === exactBlock ? 'on' : ''}`}
+                  onClick={() => {
+                    setExactBlock(b.block);
+                    setPicked([]);
+                    setNotice(null);
+                  }}
+                  disabled={locked}
+                  title={b.gate}
+                >
+                  Block {b.block}
+                  <small>{b.free} free</small>
+                </button>
+              ))}
+            </div>
+            {detail ? (
+              <SeatGrid
+                detail={detail}
+                color={colors.get(exactZone) ?? '#64748b'}
+                selected={picked}
+                readOnly={locked}
+                onSeat={pickSeat}
+              />
+            ) : (
+              <div className="seat-grid-loading">Loading seats…</div>
+            )}
+            {notice && <div className="seat-notice">{notice}</div>}
+            <label className="fallback-row">
+              <input type="checkbox" checked={fallback} onChange={(e) => setFallback(e.target.checked)} disabled={locked} />
+              <span>
+                If these exact seats are gone when the sale opens, buy the <b>best available adjacent seats in {exactZone}</b> instead
+                <small>Off: the order fails rather than giving you different seats</small>
+              </span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {!(showMine) && pickMode === 'zones' && (
+      <div className="md-seating">
+        <StadiumMap
+          zones={zones}
+          selected={selected}
+          hovered={hovered}
+          saleOpen={saleOpen}
+          homeTeam={m.home_team}
+          awayTeam={m.away_team}
+          onToggle={toggle}
+          onHover={setHovered}
+          highlight={mapHighlight}
+          readOnly={locked}
+        />
+        <ul className="zone-list">
+          {zones.map((z) => {
+            const soldOut = saleOpen && z.available === 0;
+            const pct = z.capacity ? (z.available / z.capacity) * 100 : 0;
+            return (
+              <li
+                key={z.code}
+                className={`zone-row ${selected.has(z.code) ? 'sel' : ''} ${soldOut ? 'soldout' : ''} ${hovered === z.code ? 'hover' : ''}`}
+                onMouseEnter={() => setHovered(z.code)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <label>
+                  <input type="checkbox" checked={selected.has(z.code)} disabled={soldOut} onChange={() => toggle(z.code)} />
+                  <span className="swatch" style={{ background: soldOut ? undefined : colors.get(z.code) }}>
+                    {z.code}
+                  </span>
+                  <span className="zone-info">
+                    <span className="zone-name">{z.name}</span>
+                    <span className="zone-desc">{z.description}</span>
+                    {saleOpen && (
+                      <span className="avail-bar" title={`${z.available} of ${z.capacity} left`}>
+                        <span style={{ width: `${pct}%` }} />
+                      </span>
+                    )}
+                  </span>
+                  <span className="zone-price">
+                    {money(z.price_cents)}
+                    <small>{soldOut ? 'Sold out' : saleOpen ? `${z.available} left` : 'per ticket'}</small>
+                  </span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      )}
+
