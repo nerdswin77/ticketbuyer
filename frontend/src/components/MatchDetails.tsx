@@ -545,3 +545,16 @@ export function MatchDetails(p: Props) {
   );
 }
 
+function Fact({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {
+  return (
+    <div className="fact">
+      <span className="fact-icon" aria-hidden>
+        {icon}
+      </span>
+      <div>
+        <div className="fact-title">{title}</div>
+        <div className="fact-body">{children}</div>
+      </div>
+    </div>
+  );
+}
