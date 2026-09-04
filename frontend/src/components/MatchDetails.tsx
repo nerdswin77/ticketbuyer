@@ -453,3 +453,95 @@ export function MatchDetails(p: Props) {
       </div>
       )}
 
+      {/* ------------------------------------------------ purchase bar */}
+      <div className="md-buybar">
+        {pickMode === 'exact' ? (
+          <div className="ticket-count" aria-live="polite">
+            <span className="tc-num">{showMine && p.order ? p.order.quantity : picked.length}</span>
+            <span className="tc-label">ticket{(showMine && p.order ? p.order.quantity : picked.length) === 1 ? '' : 's'}</span>
+          </div>
+        ) : (
+          <label>
+            Tickets
+            <select value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} disabled={locked}>
+              {Array.from({ length: p.maxTickets }, (_, i) => i + 1).map((n) => (
+                <option key={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {pickMode === 'zones' && (
+          <>
+            <label>
+              If several zones are free
+              <select value={strategy} onChange={(e) => setStrategy(e.target.value as Strategy)} disabled={locked}>
+                <option value="best">Best position first</option>
+                <option value="cheapest">Cheapest first</option>
+              </select>
+            </label>
+          </>
+        )}
+        <div className="md-summary">
+          {mySeats && p.order ? (
+            <>
+              <span>
+                Your seats: <b>Block {p.order.block} · {formatPositions(p.order.positions)}</b>
+              </span>
+              <small>{p.order.gate}</small>
+            </>
+          ) : pickMode === 'exact' ? (
+            exactReady && exactZoneCat ? (
+              <>
+                <span>
+                  <b>
+                    {picked.length} ticket{picked.length > 1 ? 's' : ''} · Block {exactBlock} · {formatPositions(picked)}
+                  </b>
+                </span>
+                <span className="md-total">
+                  {picked.length} × {money(exactZoneCat.price_cents)} = <b>{money(exactZoneCat.price_cents * picked.length)}</b>
+                </span>
+                <small>{exactBlockInfo?.gate}{fallback ? ' · falls back to best seats in zone' : ' · exact seats only'}</small>
+              </>
+            ) : (
+              <span className="muted">Click seats in the grid, one by one. Each seat you pick is one ticket</span>
+            )
+          ) : chosen.length === 0 ? (
+            <span className="bad">Select at least one zone</span>
+          ) : expected ? (
+            <>
+              <span>
+                {saleOpen ? 'You get' : 'Target'}: <b>{expected.name}</b>
+              </span>
+              <span className="md-total">
+                {quantity} × {money(expected.price_cents)} = <b>{money(expected.price_cents * quantity)}</b>
+              </span>
+              <small>Max {money(maxPrice)} per ticket across {chosen.length} zone{chosen.length > 1 ? 's' : ''}</small>
+            </>
+          ) : (
+            <span className="bad">Not enough seats left together in your zones</span>
+          )}
+          {w?.message && <small className="md-status">Status: {w.message}</small>}
+        </div>
+        <div className="md-actions">
+          {!w && pickMode === 'zones' && (
+            <button onClick={watchAlert} disabled={busy || chosen.length === 0}>
+              🔔 Alert me
+            </button>
+          )}
+          <button
+            className={saleOpen ? 'primary big' : 'preorder big'}
+            disabled={
+              busy ||
+              locked ||
+              (pickMode === 'exact' ? !exactReady : chosen.length === 0 || (saleOpen && (totalLeft === 0 || !expected)))
+            }
+            onClick={buy}
+          >
+            {buyLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
