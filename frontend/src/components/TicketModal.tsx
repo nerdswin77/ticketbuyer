@@ -120,3 +120,26 @@ export function TicketModal({ order: o, match: m, league, onClose }: Props) {
           </div>
         </div>
 
+        <div className="ticket-foot">
+          <span>
+            Order <b className="mono">{o.id}</b>
+          </span>
+          <span>
+            {o.quantity} × {money(o.unit_price_cents, o.currency)} = <b>{money(o.total_cents, o.currency)}</b>
+          </span>
+          <span className="muted small">Demo ticket from the simulated exchange. Not valid for entry.</span>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SeatCell({ label, value, sub, wide }: { label: string; value: string; sub?: string; wide?: boolean }) {
+  return (
+    <div className={`seat-cell ${wide ? 'wide' : ''}`}>
+      <span className="seat-label">{label}</span>
+      <span className="seat-value">{value}</span>
+      {sub && <span className="seat-sub">{sub}</span>}
+    </div>
+  );
+}
