@@ -122,3 +122,108 @@ function WatchCard({
         </div>
       </div>
 
+      <div className={`seat-preview ${hasSeats ? 'has-seats' : ''}`}>
+        <StadiumMap
+          zones={m.categories}
+          homeTeam={m.home_team}
+          awayTeam={m.away_team}
+          selected={new Set(w.category_codes)}
+          highlight={hasSeats && order ? { code: order.category_code, blockIndex: order.block_index } : null}
+          readOnly
+          compact
+        />
+        <div className="seat-preview-text">
+          {hasSeats && order ? (
+            <>
+              <span className="sp-title">{order.status === 'paid' ? 'Your seats' : 'Seats held'}</span>
+              <span className="sp-main">
+                {order.category_code} · Block {order.block}
+              </span>
+              <span>
+                {formatPositions(order.positions)}
+              </span>
+              <span className="muted">{order.gate}</span>
+              <button className="mini" onClick={() => onViewTicket(order)}>
+                🎟 View ticket
+              </button>
+            </>
+          ) : (
+            <>
+              {w.exact_block ? (
+                <>
+                  <span className="sp-title">{w.mode === 'auto' && now < m.sale_opens_at_ms ? 'Pre-ordered exact seats' : 'Exact seats'}</span>
+                  <span className="sp-main">
+                    {w.category_codes[0]} · Block {w.exact_block}
+                  </span>
+                  <span>
+                    {w.exact_positions.length} ticket{w.exact_positions.length > 1 ? 's' : ''} · {formatPositions(w.exact_positions)}
+                  </span>
+                  <span className="muted">{w.exact_fallback ? 'Falls back to best seats in zone' : 'These seats only'}</span>
+                </>
+              ) : (
+                <>
+                  <span className="sp-title">{w.mode === 'auto' && now < m.sale_opens_at_ms ? 'Pre-ordered zones' : 'Target zones'}</span>
+                  <span className="sp-main">{w.category_codes.join(' · ')}</span>
+                  <span className="muted">
+                    {w.strategy === 'best' ? 'Best position first' : 'Cheapest first'}, max {money(w.max_price_cents, currency)}
+                  </span>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="row">
+        <label>
+          Mode
+          <select
+            value={w.mode}
+            disabled={locked}
+            onChange={(e) => void actions.updateWatch(w.id, { mode: e.target.value as WatchMode })}
+          >
+            <option value="auto">⚡ Auto-buy</option>
+            <option value="alert">🔔 Alert + 1-click</option>
+          </select>
+        </label>
+        <label>
+          Tickets
+          <input
+            type="number"
+            min={1}
+            max={maxTickets}
+            value={qty}
+            disabled={locked}
+            onChange={(e) => setQty(e.target.value)}
+            onBlur={commitQty}
+            onKeyDown={onEnter(commitQty)}
+          />
+        </label>
+        <label>
+          Max / ticket
+          <input
+            type="number"
+            min={1}
+            value={maxPrice}
+            disabled={locked}
+            onChange={(e) => setMaxPrice(e.target.value)}
+            onBlur={commitPrice}
+            onKeyDown={onEnter(commitPrice)}
+          />
+        </label>
+      </div>
+
+      <div className="row">
+        <label className="grow">
+          If several zones are free
+          <select
+            value={w.strategy}
+            disabled={locked}
+            onChange={(e) => void actions.updateWatch(w.id, { strategy: e.target.value as Strategy })}
+          >
+            <option value="best">Best position first</option>
+            <option value="cheapest">Cheapest first</option>
+          </select>
+        </label>
+      </div>
+
