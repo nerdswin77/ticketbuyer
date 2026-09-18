@@ -227,3 +227,47 @@ function WatchCard({
         </label>
       </div>
 
+      <div className="zone-chips" role="group" aria-label="Seating zones">
+        {m.categories.map((c) => {
+          const on = w.category_codes.includes(c.code);
+          const tooPricey = c.price_cents > w.max_price_cents;
+          const soldOut = now >= m.sale_opens_at_ms && c.available === 0;
+          return (
+            <button
+              key={c.id}
+              className={`zchip ${on ? 'on' : ''} ${tooPricey ? 'over' : ''} ${soldOut ? 'out' : ''}`}
+              disabled={locked}
+              aria-pressed={on}
+              title={`${c.name}: ${c.description}${tooPricey ? ' (above your max price)' : ''}`}
+              onClick={() => toggleCat(c.code)}
+            >
+              <b>{c.code}</b> {money(c.price_cents, currency)}
+              {now >= m.sale_opens_at_ms && <span className="avail">{c.available}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {w.message && <div className={`msg msg-${w.status}`}>{w.message}</div>}
+
+      <div className="row">
+        {(w.status === 'sale_open' || (w.status === 'failed' && now >= m.sale_opens_at_ms)) && (
+          <button className="primary" onClick={() => void actions.buy(w.id)}>
+            BUY NOW
+          </button>
+        )}
+        {w.mode === 'alert' && (w.status === 'watching' || w.status === 'armed') && now < m.sale_opens_at_ms && (
+          <button onClick={() => void actions.buy(w.id)} title="Switch to auto-buy: fires at T+0 without waiting for your click">
+            ⏱ Pre-order now
+          </button>
+        )}
+        {w.status === 'failed' && <button onClick={() => void actions.retry(w.id)}>Re-arm</button>}
+        {!['purchasing', 'requires_action'].includes(w.status) && (
+          <button className="danger" onClick={() => void actions.removeWatch(w.id)}>
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
