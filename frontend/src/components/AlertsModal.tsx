@@ -93,3 +93,20 @@ export function AlertsModal({ profile, leagues, maxTickets, onSave, onAnnounceNo
           )}
         </section>
 
+        <section className="demo-box">
+          <span className="small muted">Demo: fixtures are announced automatically every ~45 s.</span>
+          <button className="mini" onClick={onAnnounceNow}>
+            📅 Announce next fixture now
+          </button>
+        </section>
+
+        <div className="form-actions">
+          <button onClick={onClose}>Cancel</button>
+          <button className="primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
