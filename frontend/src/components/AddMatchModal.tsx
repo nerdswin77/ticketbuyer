@@ -105,3 +105,45 @@ export function AddMatchModal({ leagues, defaultLeague, onCreate, onCreated, onC
           </label>
         </div>
 
+        {home && away && (
+          <div className="am-preview">
+            <LeagueLogo leagueId={league} size={26} />
+            <TeamCrest team={home} size={44} />
+            <b>{home}</b>
+            <span className="muted">vs</span>
+            <b>{away}</b>
+            <TeamCrest team={away} size={44} />
+            {homeTeam?.stadium && (
+              <span className="am-venue">
+                🏟 {homeTeam.stadium}, {homeTeam.city}
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="row">
+          <label className="grow">
+            Match date
+            <input type="date" min={today()} value={date} onChange={(e) => setDate(e.target.value)} required />
+          </label>
+          <label className="grow">
+            Kick-off (stadium local time)
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} disabled={timeTbc} />
+          </label>
+        </div>
+        <label className="inline-check">
+          <input type="checkbox" checked={timeTbc} onChange={(e) => setTimeTbc(e.target.checked)} /> Kick-off time not confirmed yet
+        </label>
+        {error && <div className="form-error">{error}</div>}
+        <div className="form-actions">
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="primary" disabled={saving || !teams.length}>
+            {saving ? 'Adding…' : 'Add match & choose seats →'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
