@@ -91,3 +91,31 @@ function FixtureToast({
   const { leaving, hold, release } = useAutoDismiss(() => onDismiss(m.id), AUTO_DISMISS_MS);
   const saleIn = m.sale_opens_at_ms - now;
 
+  return (
+    <div className={`fixture-toast ${leaving ? 'leaving' : ''}`} role="status" onMouseEnter={hold} onMouseLeave={release}>
+      <div className="ft-top">
+        <span className="ft-badge">📅 New fixture announced</span>
+        <button className="js-close" aria-label="Dismiss" onClick={() => onDismiss(m.id)}>
+          ✕
+        </button>
+      </div>
+      <button className="ft-fixture" onClick={() => onOpen(m)}>
+        <TeamCrest team={m.home_team} size={34} />
+        <span>
+          <b>{m.home_team}</b> v <b>{m.away_team}</b>
+          <small>
+            {inZone(m.kickoff_ms, m.timezone, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} ·{' '}
+            {m.stadium}
+          </small>
+        </span>
+        <TeamCrest team={m.away_team} size={34} />
+      </button>
+      <div className="ft-bottom">
+        <span className={saleIn > 0 ? 'warn' : 'ok'}>
+          {m.sale_date_tba ? 'Sale date TBA' : saleIn > 0 ? `On sale in ${countdown(saleIn)}` : 'On sale now'}
+        </span>
+        <BuyButton match={m} watch={watch} onBuy={() => onPreorder(m)} />
+      </div>
+    </div>
+  );
+}
