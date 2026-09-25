@@ -94,3 +94,100 @@ export function MyTicketsPage(p: Props) {
           <Empty text="No paid tickets yet. Pre-order seats from the Schedule and they'll appear here once bought." />
         ))}
 
+      {tab === 'preorders' &&
+        (preorders.length ? (
+          <div className="my-list">
+            {preorders.map((w) => {
+              const m = p.matches.get(w.match_id);
+              return m ? <PreorderCard key={w.id} watch={w} match={m} actions={p.actions} onChange={() => p.onOpenMatch(m)} /> : null;
+            })}
+          </div>
+        ) : (
+          <Empty text="No pre-orders. Open the Schedule, pick a match and choose your seats: we buy them the instant the sale opens." />
+        ))}
+
+      {tab === 'attention' &&
+        (attentionCount ? (
+          <div className="my-list">
+            {attention.approve.map((o) => {
+              const m = p.matches.get(o.match_id);
+              return (
+                <div key={o.id} className="my-card attention">
+                  <MatchHead match={m} />
+                  <div className="my-body">
+                    <b>Your bank needs you to approve this payment</b>
+                    <span>
+                      Seats are held for a short time: Block {o.block} · {formatPositions(o.positions)} · {money(o.total_cents, o.currency)}
+                    </span>
+                  </div>
+                  <div className="my-actions">
+                    <button className="primary" onClick={() => void p.onAuthenticate(o)}>
+                      Approve payment
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {attention.failed.map((w) => {
+              const m = p.matches.get(w.match_id);
+              return (
+                <div key={w.id} className="my-card attention">
+                  <MatchHead match={m} />
+                  <div className="my-body">
+                    <b className="bad">Order failed</b>
+                    <span>{w.message}</span>
+                  </div>
+                  <div className="my-actions">
+                    {m && <button onClick={() => p.onOpenMatch(m)}>Choose other seats</button>}
+                    <button onClick={() => void p.actions.retry(w.id)}>Re-arm</button>
+                    <ConfirmButton label="Remove" confirmLabel="Remove order" danger onConfirm={() => void p.actions.removeWatch(w.id)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <Empty text="Nothing needs your attention." />
+        ))}
+
+      {tab === 'history' &&
+        (history.length ? (
+          <div className="table-wrap panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Match</th>
+                  <th>Seats</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((o) => (
+                  <tr key={o.id}>
+                    <td className="mono">{o.id}</td>
+                    <td>{o.match_label}</td>
+                    <td>
+                      {o.category_code} · Block {o.block} · {formatPositions(o.positions)}
+                    </td>
+                    <td>{money(o.total_cents, o.currency)}</td>
+                    <td>
+                      <span className={`ostatus o-${o.status}`} title={o.failure_reason || undefined}>
+                        {o.status === 'paid' ? 'Played' : o.status}
+                      </span>
+                    </td>
+                    <td>{new Date(o.created_at_ms).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty text="No past orders." />
+        ))}
+    </div>
+  );
+}
+
