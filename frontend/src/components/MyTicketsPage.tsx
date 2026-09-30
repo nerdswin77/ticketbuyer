@@ -191,3 +191,102 @@ export function MyTicketsPage(p: Props) {
   );
 }
 
+// ------------------------------------------------------------------ cards
+
+function TicketCard({ order: o, match: m, profile, actions, onView }: { order: Order; match: Match; profile: Profile; actions: StoreActions; onView: (o: Order) => void }) {
+  const initial = () =>
+    o.positions.map(([row, seat]) => ({ row, seat, name: o.attendees.find((a) => a.row === row && a.seat === seat)?.name ?? '' }));
+  const [names, setNames] = useState<Attendee[]>(initial);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setNames(initial()), [o.attendees]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = names.some((n, i) => n.name !== (initial()[i]?.name ?? ''));
+  const missing = names.filter((n) => !n.name.trim()).length;
+
+  return (
+    <div className="my-card ticket-card">
+      <MatchHead match={m} />
+      <div className="my-seat-summary">
+        <div>
+          <span className="msl">Zone</span>
+          <b>{o.category_code}</b>
+          <small>{o.category_name}</small>
+        </div>
+        <div>
+          <span className="msl">Block</span>
+          <b>{o.block}</b>
+          <small>{o.gate}</small>
+        </div>
+        <div className="grow">
+          <span className="msl">Seats</span>
+          <b>{formatPositions(o.positions)}</b>
+          <small>
+            {o.quantity} ticket{o.quantity > 1 ? 's' : ''} · {money(o.total_cents, o.currency)}
+          </small>
+        </div>
+        <div>
+          <span className="msl">Order</span>
+          <b className="mono">{o.id}</b>
+          <small>{o.paid_at_ms ? `Paid ${new Date(o.paid_at_ms).toLocaleString()}` : o.status}</small>
+        </div>
+      </div>
+
+      <div className="attendees">
+        <div className="att-head">
+          <b>Ticket holders</b>
+          <span className={missing ? 'warn' : 'ok'}>{missing ? `${missing} name${missing > 1 ? 's' : ''} missing` : 'All seats named'}</span>
+          {profile.full_name && names.every((n) => n.name !== profile.full_name) && (
+            <button
+              className="link small"
+              onClick={() => setNames((cur) => cur.map((n, i) => (i === 0 && !n.name ? { ...n, name: profile.full_name } : n)))}
+            >
+              Use my name for the first seat
+            </button>
+          )}
+        </div>
+        <div className="att-grid">
+          {names.map((n, i) => (
+            <label key={`${n.row}-${n.seat}`}>
+              <span>
+                Row {n.row} · Seat {n.seat}
+              </span>
+              <input
+                value={n.name}
+                maxLength={80}
+                placeholder="Full name as on ID"
+                onChange={(e) => {
+                  setSaved(false);
+                  setNames((cur) => cur.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)));
+                }}
+              />
+            </label>
+          ))}
+        </div>
+        <div className="att-foot">
+          <small className="muted">Tickets are personal: the name may be checked against ID at the gate.</small>
+          <button
+            className={dirty ? 'primary' : ''}
+            disabled={!dirty}
+            onClick={async () => {
+              if (await actions.setAttendees(o.id, names)) setSaved(true);
+            }}
+          >
+            {saved && !dirty ? '✓ Saved' : 'Save names'}
+          </button>
+        </div>
+      </div>
+
+      <div className="my-actions">
+        <button className="primary" onClick={() => onView(o)}>
+          🎟 View ticket
+        </button>
+        <a className="btn" href={api.calendarUrl(o.id)} download>
+          📅 Add to calendar
+        </a>
+        {o.status === 'paid' && (
+          <ConfirmButton label="Refund" confirmLabel={`Refund ${money(o.total_cents, o.currency)}`} danger onConfirm={() => void actions.refund(o.id)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
