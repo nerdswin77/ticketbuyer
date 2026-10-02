@@ -75,3 +75,103 @@ const TEST_CARDS = [
   { label: '3-D Secure', number: '4000 0025 0000 3155' },
 ];
 
+function MockCardForm({ defaultName, onSaved }: { defaultName: string; onSaved: (p: Profile) => void }) {
+  const [card, setCard] = useState({ number: '', exp: '', cvc: '', name: defaultName });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const m = /^(\d{1,2})\s*\/\s*(\d{2}|\d{4})$/.exec(card.exp.trim());
+    if (!m) return setError('Expiry must be MM/YY');
+    const year = Number(m[2]!.length === 2 ? `20${m[2]}` : m[2]);
+    setSaving(true);
+    setError(null);
+    try {
+      await api.setupPaymentMethod();
+      onSaved(
+        await api.saveMockCard({
+          number: card.number.replace(/\s/g, ''),
+          exp_month: Number(m[1]),
+          exp_year: year,
+          cvc: card.cvc,
+          name: card.name,
+        }),
+      );
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <div className="test-cards">
+        <span className="muted small">Test cards:</span>
+        {TEST_CARDS.map((t) => (
+          <button
+            type="button"
+            key={t.number}
+            className="mini"
+            onClick={() => setCard({ ...card, number: t.number, exp: '12/30', cvc: '123' })}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <label>
+        Card number
+        <input
+          inputMode="numeric"
+          autoComplete="cc-number"
+          placeholder="4242 4242 4242 4242"
+          value={card.number}
+          onChange={(e) => setCard({ ...card, number: e.target.value })}
+          required
+        />
+      </label>
+      <div className="row">
+        <label className="grow">
+          Expiry
+          <input placeholder="MM/YY" value={card.exp} onChange={(e) => setCard({ ...card, exp: e.target.value })} required />
+        </label>
+        <label className="grow">
+          CVC
+          <input
+            inputMode="numeric"
+            placeholder="123"
+            value={card.cvc}
+            onChange={(e) => setCard({ ...card, cvc: e.target.value })}
+            required
+          />
+        </label>
+      </div>
+      <label>
+        Name on card
+        <input value={card.name} onChange={(e) => setCard({ ...card, name: e.target.value })} />
+      </label>
+      {error && <div className="form-error">{error}</div>}
+      <div className="form-actions">
+        <button type="submit" className="primary" disabled={saving}>
+          {saving ? 'Saving…' : 'Save card'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function StripeCardForm({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api
+      .setupPaymentMethod()
+      .then((r) => setClientSecret(r.client_secret))
+      .catch((err) => setError(errMsg(err)));
+  }, []);
+
