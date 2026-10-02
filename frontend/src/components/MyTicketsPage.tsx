@@ -290,3 +290,152 @@ function TicketCard({ order: o, match: m, profile, actions, onView }: { order: O
   );
 }
 
+function PreorderCard({ watch: w, match: m, actions, onChange }: { watch: Watch; match: Match; actions: StoreActions; onChange: () => void }) {
+  const now = useNow();
+  const zone = m.categories.find((c) => c.code === w.category_codes[0]);
+  const est = estimate(w, m);
+  let status: JSX.Element;
+  if (w.status === 'purchasing') status = <span className="tag tag-open">Buying now…</span>;
+  else if (m.sale_date_tba) status = <span className="tag tag-tba">Waiting for the sale date</span>;
+  else if (now < m.sale_opens_at_ms)
+    status = (
+      <span className={`tag ${w.status === 'armed' ? 'tag-open' : 'tag-soon'}`}>
+        {w.status === 'armed' ? '⚡ Armed · ' : ''}Sale opens in {countdown(m.sale_opens_at_ms - now)}
+      </span>
+    );
+  else status = <span className="tag tag-open">Sale open</span>;
+
+  return (
+    <div className="my-card preorder-card">
+      <MatchHead match={m} />
+      <div className="my-seat-summary">
+        {w.exact_block ? (
+          <>
+            <div>
+              <span className="msl">Zone</span>
+              <b>{zone?.code}</b>
+              <small>{zone?.name}</small>
+            </div>
+            <div>
+              <span className="msl">Block</span>
+              <b>{w.exact_block}</b>
+            </div>
+            <div className="grow">
+              <span className="msl">Exact seats</span>
+              <b>{formatPositions(w.exact_positions)}</b>
+              <small>
+                {w.exact_positions.length} ticket{w.exact_positions.length > 1 ? 's' : ''} · {money(est)}
+              </small>
+            </div>
+          </>
+        ) : (
+          <div className="grow">
+            <span className="msl">Best available in</span>
+            <b>{w.category_codes.join(' · ')}</b>
+            <small>
+              {w.quantity} tickets · {w.strategy === 'best' ? 'best position first' : 'cheapest first'} · up to {money(w.max_price_cents)} each
+            </small>
+          </div>
+        )}
+        <div>
+          <span className="msl">Status</span>
+          {status}
+          <small>{w.mode === 'auto' ? 'Buys automatically' : 'Alert only'}</small>
+        </div>
+      </div>
+      {w.exact_block && (
+        <label className="fallback-row compact">
+          <input type="checkbox" checked={w.exact_fallback} onChange={(e) => void actions.updateWatch(w.id, { exact_fallback: e.target.checked })} />
+          <span>If these exact seats are gone, buy the best adjacent seats in {zone?.code} instead</span>
+        </label>
+      )}
+      <div className="my-actions">
+        <button onClick={onChange} disabled={w.status === 'purchasing'}>
+          Change seats
+        </button>
+        <ConfirmButton label="Cancel pre-order" confirmLabel="Yes, cancel" danger disabled={w.status === 'purchasing'} onConfirm={() => void actions.removeWatch(w.id)} />
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ bits
+
+function MatchHead({ match: m }: { match: Match | undefined }) {
+  if (!m) return <div className="my-head muted">Match no longer listed</div>;
+  return (
+    <div className="my-head">
+      <TeamCrest team={m.home_team} size={38} url={m.home_crest_url} />
+      <div className="my-title">
+        <b>
+          {m.home_team} <span className="muted">v</span> {m.away_team}
+        </b>
+        <span>
+          {inZone(m.kickoff_ms, m.timezone, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })} ·{' '}
+          {m.kickoff_tbc ? 'time TBC' : `${inZone(m.kickoff_ms, m.timezone, { hour: '2-digit', minute: '2-digit' })} ${zoneAbbr(m.kickoff_ms, m.timezone)}`} · 🏟{' '}
+          {m.stadium}
+        </span>
+      </div>
+      <TeamCrest team={m.away_team} size={38} url={m.away_crest_url} />
+      {m.famous_name && <span className="tag tag-hot">🔥 {m.famous_name}</span>}
+    </div>
+  );
+}
+
+function ConfirmButton({ label, confirmLabel, onConfirm, danger, disabled }: { label: string; confirmLabel: string; onConfirm: () => void; danger?: boolean; disabled?: boolean }) {
+  const [asking, setAsking] = useState(false);
+  useEffect(() => {
+    if (!asking) return;
+    const t = window.setTimeout(() => setAsking(false), 5000);
+    return () => window.clearTimeout(t);
+  }, [asking]);
+  return asking ? (
+    <span className="confirm-pair">
+      <button className={danger ? 'danger solid' : 'primary'} onClick={() => { setAsking(false); onConfirm(); }}>
+        {confirmLabel}
+      </button>
+      <button onClick={() => setAsking(false)}>Keep</button>
+    </span>
+  ) : (
+    <button className={danger ? 'danger' : ''} disabled={disabled} onClick={() => setAsking(true)}>
+      {label}
+    </button>
+  );
+}
+
+function Stat({ value, label, sub, tone }: { value: number | string; label: string; sub: string; tone: string }) {
+  return (
+    <div className="my-stat">
+      <span className={`stat-value ${tone}`}>{value}</span>
+      <span className="stat-label">{label}</span>
+      <small>{sub}</small>
+    </div>
+  );
+}
+
+function TabBtn({ on, onClick, label, count, alert }: { on: boolean; onClick: () => void; label: string; count: number; alert?: boolean }) {
+  return (
+    <button role="tab" aria-selected={on} className={`my-tab ${on ? 'on' : ''}`} onClick={onClick}>
+      {label}
+      <span className={`seg-count ${alert ? 'alert' : ''}`}>{count}</span>
+    </button>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return <div className="empty panel">{text}</div>;
+}
+
+function saleKey(m: Match | undefined): number {
+  if (!m) return Number.MAX_SAFE_INTEGER;
+  return m.sale_date_tba ? Number.MAX_SAFE_INTEGER - 1 : m.sale_opens_at_ms;
+}
+
+function estimate(w: Watch, m: Match | undefined): number {
+  if (!m) return 0;
+  if (w.exact_block) {
+    const z = m.categories.find((c) => c.code === w.category_codes[0]);
+    return (z?.price_cents ?? 0) * w.exact_positions.length;
+  }
+  return w.max_price_cents * w.quantity;
+}
