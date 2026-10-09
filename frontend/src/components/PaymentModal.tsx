@@ -175,3 +175,41 @@ function StripeCardForm({ profile, onSaved }: { profile: Profile; onSaved: (p: P
       .catch((err) => setError(errMsg(err)));
   }, []);
 
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const card = elements?.getElement(CardElement);
+    if (!stripe || !card || !clientSecret) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await stripe.confirmCardSetup(clientSecret, {
+        payment_method: { card, billing_details: { name: profile.full_name || undefined, email: profile.email || undefined } },
+      });
+      if (res.error) throw new Error(res.error.message);
+      onSaved(await api.saveStripeCard(res.setupIntent.id));
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <div className="stripe-card">
+        <CardElement
+          options={{
+            style: { base: { color: cssVar('--text', '#0f172a'), fontSize: '15px', '::placeholder': { color: cssVar('--muted', '#64748b') } } },
+          }}
+        />
+      </div>
+      <p className="muted small">Stripe test mode: use 4242 4242 4242 4242, any future date and any CVC.</p>
+      {error && <div className="form-error">{error}</div>}
+      <div className="form-actions">
+        <button type="submit" className="primary" disabled={!stripe || !clientSecret || saving}>
+          {saving ? 'Saving…' : 'Save card'}
+        </button>
+      </div>
+    </form>
+  );
+}
