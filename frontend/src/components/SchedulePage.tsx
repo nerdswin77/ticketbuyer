@@ -236,3 +236,44 @@ const FixtureRow = memo(function FixtureRow({
     mine = <span className="sch-mine failed">✖ {w.message}</span>;
   }
 
+  return (
+    <li className="sch-row" onClick={() => onOpen(m)}>
+      <span className="sch-time">
+        {m.kickoff_tbc ? 'TBC' : inZone(m.kickoff_ms, m.timezone, { hour: '2-digit', minute: '2-digit' })}
+        <small>{m.kickoff_tbc ? 'time' : zoneAbbr(m.kickoff_ms, m.timezone)}</small>
+      </span>
+      <span className="sch-teams">
+        <span className="sch-team home">
+          {m.home_team}
+          <TeamCrest team={m.home_team} size={32} url={m.home_crest_url} />
+        </span>
+        <span className="sch-vs">v</span>
+        <span className="sch-team">
+          <TeamCrest team={m.away_team} size={32} url={m.away_crest_url} />
+          {m.away_team}
+        </span>
+      </span>
+      <span className="sch-venue">
+        {m.famous_name && <span className="tag tag-hot">🔥 {m.famous_name}</span>}
+        <span>
+          🏟 {m.stadium}
+          {m.city ? `, ${m.city}` : ''}
+        </span>
+        <small className="muted">{m.round_label}</small>
+      </span>
+      <span className="sch-status">
+        {sale}
+        {mine}
+      </span>
+      <button
+        className={`sch-cta ${open ? 'primary' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen(m);
+        }}
+      >
+        {o?.status === 'paid' ? 'View seats' : w && w.mode === 'auto' && !open ? 'Change seats' : open ? 'Choose seats & buy' : 'Choose seats & pre-order'}
+      </button>
+    </li>
+  );
+});
