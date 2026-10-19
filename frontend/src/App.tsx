@@ -138,3 +138,87 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
     window.scrollTo({ top: 0 });
   };
 
+  // ---- newly announced fixtures ------------------------------------------------
+  // A fixture is "new" if it was announced in the last few hours and the user hasn't seen it yet.
+  const [seen, setSeen] = useState<Set<number>>(() => new Set(storage.get<number[]>('seenFixtures', [])));
+  const markSeen = useCallback((ids: number[]) => {
+    setSeen((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => n.add(id));
+      storage.set('seenFixtures', [...n].slice(-500));
+      return n;
+    });
+  }, []);
+  const [toastIds, setToastIds] = useState<number[]>([]);
+  const dismissToast = useCallback((id: number) => setToastIds((t) => t.filter((x) => x !== id)), []);
+  useEffect(() => {
+    const latestId = announcements[0];
+    if (latestId != null) setToastIds((t) => (t.includes(latestId) ? t : [latestId, ...t]));
+  }, [announcements]);
+
+  const updateFilters = (f: FilterState) => {
+    setFilters(f);
+    storage.set(
+      'hiddenLeagues',
+      leagues.map((l) => l.id).filter((id) => !f.leagues.has(id)),
+    );
+  };
+  const favorites = profile.favorite_leagues;
+  const toggleFavorite = (id: string) => {
+    const next = favorites.includes(id) ? favorites.filter((f) => f !== id) : [...favorites, id];
+    void actions.setFavorites(profile, next);
+    // Make sure a newly starred competition is visible.
+    if (!filters.leagues.has(id) && !favorites.includes(id)) updateFilters({ ...filters, leagues: new Set([...filters.leagues, id]) });
+    if (!next.length && filters.favoritesOnly) setFilters((f) => ({ ...f, favoritesOnly: false }));
+  };
+
+  // Pop a "tickets secured" banner for purchases that complete while the page is open.
+  const seenPaid = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const paid = orders.filter((o) => o.status === 'paid').map((o) => o.id);
+    if (seenPaid.current === null) {
+      seenPaid.current = new Set(paid);
+      return;
+    }
+    const fresh = paid.find((id) => !seenPaid.current!.has(id));
+    paid.forEach((id) => seenPaid.current!.add(id));
+    if (fresh) setCelebrate(fresh);
+  }, [orders]);
+  const updateDefaultMode = (m: WatchMode) => {
+    setDefaultMode(m);
+    storage.set('defaultMode', m);
+  };
+
+  const updateQuantity = (n: number) => {
+    setQuantity(n);
+    storage.set('quantity', n);
+  };
+
+  const matchById = useMemo(() => new Map(matches.map((m) => [m.id, m])), [matches]);
+  const watchByMatch = useMemo(() => new Map(watches.map((w) => [w.match_id, w])), [watches]);
+  const watched = useMemo(() => new Set(watchByMatch.keys()), [watchByMatch]);
+  const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders]);
+  const ticketOrder = ticketOrderId ? orderById.get(ticketOrderId) : undefined;
+  const celebrateOrder = celebrate ? orderById.get(celebrate) : undefined;
+
+  const quickBuy = (m: Match) => {
+    if (!profile.has_payment_method) {
+      actions.log('warn', 'Add a payment card first');
+      setModal('payment');
+      return;
+    }
+    void actions.quickBuy(m.id, { quantity });
+  };
+
+  const NEW_WINDOW_MS = 6 * 3_600_000;
+  const newFixtures = useMemo(() => {
+    const now = Date.now() + data.clockOffset;
+    return matches
+      // Fixtures you added yourself are not "announcements".
+      .filter((m) => m.source !== 'user' && m.published_at_ms != null && now - m.published_at_ms < NEW_WINDOW_MS && !seen.has(m.id))
+      .sort((a, b) => (b.published_at_ms ?? 0) - (a.published_at_ms ?? 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches, seen, data.clockOffset, tick]);
+  const newIds = useMemo(() => new Set(newFixtures.map((m) => m.id)), [newFixtures]);
+  const toastMatches = toastIds.map((id) => matchById.get(id)).filter((m): m is Match => !!m);
+
