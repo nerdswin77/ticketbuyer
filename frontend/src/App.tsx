@@ -222,3 +222,123 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
   const newIds = useMemo(() => new Set(newFixtures.map((m) => m.id)), [newFixtures]);
   const toastMatches = toastIds.map((id) => matchById.get(id)).filter((m): m is Match => !!m);
 
+  const preorder = (m: Match) => {
+    markSeen([m.id]);
+    dismissToast(m.id);
+    quickBuy(m);
+  };
+  const openFixture = (m: Match) => {
+    markSeen([m.id]);
+    dismissToast(m.id);
+    setDetailsId(m.id);
+  };
+
+  const updateAvailability = (a: Availability) => {
+    setAvailability(a);
+    storage.set('availability', a);
+  };
+
+  // Tickets page = matches whose sale has STARTED (on sale or sold out). Not-yet-on-sale matches live on the Schedule page.
+  const { visible, counts, saleStartedMatches } = useMemo(() => {
+    const q = filters.search.trim().toLowerCase();
+    const now = Date.now() + data.clockOffset;
+    const started = matches.filter((m) => !m.sale_date_tba && now >= m.sale_opens_at_ms && m.kickoff_ms > now);
+    const base = started.filter(
+      (m) =>
+        filters.leagues.has(m.league_id) &&
+        (!filters.favoritesOnly || favorites.includes(m.league_id)) &&
+        (!filters.famousOnly || m.famous_name) &&
+        (!q || `${m.home_team} ${m.away_team} ${m.famous_name ?? ''} ${m.stadium} ${m.city}`.toLowerCase().includes(q)),
+    );
+    const soldOut = (m: Match) => isSoldOut(m, now);
+    const counts: Record<Availability, number> = {
+      available: base.filter((m) => !soldOut(m)).length,
+      soldout: base.filter(soldOut).length,
+    };
+    const visible = availability === 'soldout' ? base.filter(soldOut) : base.filter((m) => !soldOut(m));
+    return { visible, counts, saleStartedMatches: started };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches, filters, favorites, availability, data.clockOffset, tick]);
+
+  const detailsMatch = detailsId != null ? matchById.get(detailsId) : undefined;
+
+  const toggle = (id: number) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  // Stable identities for handlers passed to memoised cards (prevents re-rendering every card each second).
+  const onToggleCard = useStableCallback(toggle);
+  const onQuickBuyCard = useStableCallback(quickBuy);
+  const onOpenCard = useStableCallback((m: Match) => setDetailsId(m.id));
+  const onToggleFavorite = useStableCallback(toggleFavorite);
+  // From the schedule: open the match straight on the exact-seat picker.
+  const onOpenSchedule = useStableCallback((m: Match) => {
+    setSeatPickerFor(m.id);
+    setDetailsId(m.id);
+  });
+
+  const watchSelected = async () => {
+    const ids = [...selected].filter((id) => !watched.has(id));
+    if (!ids.length) return setSelected(new Set());
+    if (defaultMode === 'auto' && !profile.has_payment_method) {
+      actions.log('warn', 'Add a payment card first. Auto-buy charges it the instant seats are held');
+      setModal('payment');
+    }
+    if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission();
+    const created = await actions.watchMatches({ match_ids: ids, mode: defaultMode, quantity });
+    if (created) setSelected(new Set());
+  };
+
+  const authenticate = useCallback(
+    async (o: Order) => {
+      if (config.gateway === 'stripe') {
+        if (!config.stripe_publishable_key || !o.client_secret) return;
+        const stripe = await getStripe(config.stripe_publishable_key);
+        const res = await stripe?.confirmCardPayment(o.client_secret, { payment_method: o.payment_method_id ?? undefined });
+        if (res?.error) actions.log('error', `Authentication failed: ${res.error.message}`);
+      }
+      await actions.confirm(o.id); // mock gateway: simulated 3-D Secure approval
+    },
+    [actions, config],
+  );
+
+  return (
+    <>
+      <Header
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        connected={connected}
+        gateway={config.gateway}
+        profile={profile}
+        onAlerts={() => setModal('alerts')}
+        newFixtures={newFixtures.length}
+        nextAnnouncementAt={schedule.next_publish_at_ms}
+        onPayment={() => setModal('payment')}
+        onProfile={() => setModal('profile')}
+        onReset={() => void actions.resetDemo()}
+        page={page}
+        onPage={changePage}
+        watchBadge={watches.filter((w) => ['watching', 'armed', 'sale_open', 'purchasing'].includes(w.status)).length}
+        myBadge={
+          orders.filter((o) => o.status === 'requires_action').length +
+          watches.filter((w) => w.status === 'failed' && !orders.some((o) => o.match_id === w.match_id && ['paid', 'pending', 'requires_action'].includes(o.status))).length
+        }
+      />
+
+      {page === 'mine' && (
+        <MyTicketsPage
+          matches={matchById}
+          watches={watches}
+          orders={orders}
+          profile={profile}
+          actions={actions}
+          onOpenMatch={onOpenSchedule}
+          onViewTicket={(o) => setTicketOrderId(o.id)}
+          onAuthenticate={authenticate}
+        />
+      )}
+
