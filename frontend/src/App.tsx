@@ -342,3 +342,110 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
         />
       )}
 
+      {!profile.has_payment_method && (
+        <div className="banner-warn">
+          No payment card saved, so auto-buy can't complete a purchase.{' '}
+          <button className="link" onClick={() => setModal('payment')}>
+            Add a card →
+          </button>
+        </div>
+      )}
+
+      {page === 'schedule' && (
+        <SchedulePage
+          leagues={leagues}
+          matches={matches}
+          watchByMatch={watchByMatch}
+          orderById={orderById}
+          favorites={favorites}
+          importEnabled={config.schedule_import_enabled}
+          onOpen={onOpenSchedule}
+          onAddMatch={(lid) => {
+            setAddMatchLeague(lid);
+            setModal('add-match');
+          }}
+          onImport={async () => {
+            await actions.importSchedule();
+          }}
+          announcements={
+            <JustScheduled
+              fixtures={newFixtures.filter((m) => m.sale_date_tba || m.sale_opens_at_ms > Date.now() + data.clockOffset)}
+              leagues={leagues}
+              favorites={favorites}
+              watchByMatch={watchByMatch}
+              schedule={schedule}
+              onPreorder={preorder}
+              onOpen={openFixture}
+              onDismiss={(id) => markSeen([id])}
+              onDismissAll={() => markSeen(newFixtures.map((m) => m.id))}
+            />
+          }
+        />
+      )}
+
+      <div className="layout layout-browse" hidden={page !== 'tickets'}>
+        <Filters
+          leagues={leagues}
+          matches={matches}
+          countMatches={saleStartedMatches}
+          watches={watches}
+          favorites={favorites}
+          value={filters}
+          onChange={updateFilters}
+          onToggleFavorite={toggleFavorite}
+        />
+        <div className="main-col">
+        <MatchGrid
+          newIds={newIds}
+          matches={visible}
+          leagues={leagues}
+          selected={selected}
+          watchByMatch={watchByMatch}
+          search={filters.search}
+          quantity={quantity}
+          maxTickets={config.max_tickets_per_order}
+          availability={availability}
+          counts={counts}
+          onAvailability={updateAvailability}
+          onOpen={onOpenCard}
+          favorites={favorites}
+          onToggleFavorite={onToggleFavorite}
+          onSearch={(search) => setFilters({ ...filters, search })}
+          onQuantity={updateQuantity}
+          onToggle={onToggleCard}
+          onSelectMany={(ids) => setSelected(new Set([...selected, ...ids]))}
+          onUnselectMany={(ids) => setSelected(new Set([...selected].filter((id) => !ids.includes(id))))}
+          onClear={() => setSelected(new Set())}
+          onWatch={() => void watchSelected()}
+          onQuickBuy={onQuickBuyCard}
+          onGoSchedule={() => changePage('schedule')}
+        />
+        </div>
+      </div>
+
+      <div className="watch-page" hidden={page !== 'watch'}>
+        <div className="watch-main">
+          <Watchlist
+            watches={watches}
+            matches={matchById}
+            orders={orderById}
+            onViewTicket={(o) => setTicketOrderId(o.id)}
+            maxTickets={config.max_tickets_per_order}
+            defaultMode={defaultMode}
+            onDefaultMode={updateDefaultMode}
+            actions={actions}
+            currency={config.currency}
+          />
+          <EventLog logs={logs} />
+        </div>
+        <div className="watch-orders">
+          <OrdersTable orders={orders} onRefund={actions.refund} onAuthenticate={authenticate} onView={(o) => setTicketOrderId(o.id)} />
+        </div>
+      </div>
+
+      <p className="footnote">
+        Demo mode: fixtures, sale times and inventory come from the backend's simulated exchange, where rival buyers empty stock
+        within seconds. To buy real tickets, connect an authorised ticketing provider API through the backend's{' '}
+        <code>TicketExchange</code> interface. Official club sites don't allow automated purchasing.
+      </p>
+
