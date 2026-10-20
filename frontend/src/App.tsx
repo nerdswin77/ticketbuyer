@@ -449,3 +449,92 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
         <code>TicketExchange</code> interface. Official club sites don't allow automated purchasing.
       </p>
 
+      <BuyNowBanner watches={watches} matches={matchById} onBuy={(id) => void actions.buy(id)} />
+
+      {detailsMatch && (
+        <MatchDetails
+          match={detailsMatch}
+          league={leagues.find((l) => l.id === detailsMatch.league_id)}
+          watch={watchByMatch.get(detailsMatch.id)}
+          order={(() => {
+            const oid = watchByMatch.get(detailsMatch.id)?.order_id;
+            return oid ? orderById.get(oid) : undefined;
+          })()}
+          onViewTicket={(o) => setTicketOrderId(o.id)}
+          key={detailsMatch.id}
+          initialPickMode={openOnSeats || seatPickerFor === detailsMatch.id ? 'exact' : undefined}
+          onAnnounceSale={(id, secs) => void actions.announceSale(id, secs)}
+          hasCard={profile.has_payment_method}
+          maxTickets={config.max_tickets_per_order}
+          defaultQuantity={quantity}
+          onClose={() => setDetailsId(null)}
+          onNeedCard={() => setModal('payment')}
+          onBuy={actions.quickBuy}
+          onWatch={actions.watchMatches}
+        />
+      )}
+
+      {ticketOrder && matchById.get(ticketOrder.match_id) && (
+        <TicketModal
+          order={ticketOrder}
+          match={matchById.get(ticketOrder.match_id)!}
+          league={leagues.find((l) => l.id === matchById.get(ticketOrder.match_id)?.league_id)}
+          onClose={() => setTicketOrderId(null)}
+        />
+      )}
+
+      {celebrateOrder && !ticketOrder && (
+        <SuccessToast
+          key={celebrateOrder.id}
+          title={`Tickets secured: ${celebrateOrder.match_label}`}
+          detail={`${celebrateOrder.category_code} · Block ${celebrateOrder.block} · ${formatPositions(celebrateOrder.positions)}`}
+          onView={() => {
+            setTicketOrderId(celebrateOrder.id);
+            setCelebrate(null);
+          }}
+          onDismiss={() => setCelebrate(null)}
+        />
+      )}
+
+      {modal === 'payment' && (
+        <PaymentModal config={config} profile={profile} onSaved={actions.setProfile} onClose={() => setModal(null)} />
+      )}
+      {modal === 'profile' && <ProfileModal profile={profile} onSaved={actions.setProfile} onClose={() => setModal(null)} />}
+      {modal === 'add-match' && (
+        <AddMatchModal
+          leagues={leagues}
+          defaultLeague={addMatchLeague}
+          onCreate={actions.addMatch}
+          onCreated={(m) => {
+            setModal(null);
+            // Make sure the new fixture is visible, then open it on the exact-seat picker.
+            if (!filters.leagues.has(m.league_id)) updateFilters({ ...filters, leagues: new Set([...filters.leagues, m.league_id]) });
+            setSeatPickerFor(m.id);
+            setDetailsId(m.id);
+          }}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'alerts' && (
+        <AlertsModal
+          profile={profile}
+          leagues={leagues}
+          maxTickets={config.max_tickets_per_order}
+          onSave={actions.setPreferences}
+          onAnnounceNow={() => void actions.publishNext()}
+          onClose={() => setModal(null)}
+        />
+      )}
+
+      {!detailsMatch && !ticketOrder && (
+        <FixtureToasts
+          matches={toastMatches}
+          watchByMatch={watchByMatch}
+          onPreorder={preorder}
+          onOpen={openFixture}
+          onDismiss={dismissToast}
+        />
+      )}
+    </>
+  );
+}
