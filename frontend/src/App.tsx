@@ -95,7 +95,10 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
     else if (location.hash.startsWith('#ticket-')) history.replaceState(null, '', location.pathname + location.search);
   }, [ticketOrderId]);
   const [celebrate, setCelebrate] = useState<string | null>(null);
-  const [availability, setAvailability] = useState<Availability>(() => storage.get<Availability>('availability', 'all'));
+  const [availability, setAvailability] = useState<Availability>(() => {
+    const saved = storage.get<string>('availability', 'available');
+    return saved === 'soldout' ? 'soldout' : 'available';
+  });
   // Match details are deep-linkable: #match-12
   const [detailsId, setDetailsId] = useState<number | null>(() => {
     const m = /^#match-(\d+)(\/seats)?$/.exec(location.hash);
@@ -121,7 +124,13 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
   const [seatPickerFor, setSeatPickerFor] = useState<number | null>(null);
   const [addMatchLeague, setAddMatchLeague] = useState<string | undefined>(undefined);
   const [page, setPage] = useState<Page>(() =>
-    location.hash === '#schedule' ? 'schedule' : location.hash === '#my-tickets' ? 'mine' : storage.get<Page>('page', 'tickets'),
+    location.hash === '#schedule'
+      ? 'schedule'
+      : location.hash === '#my-tickets'
+        ? 'mine'
+        : location.hash === '#watchlist'
+          ? 'watch'
+          : storage.get<Page>('page', 'tickets'),
   );
   const changePage = (pg: Page) => {
     setPage(pg);
@@ -205,7 +214,8 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
   const newFixtures = useMemo(() => {
     const now = Date.now() + data.clockOffset;
     return matches
-      .filter((m) => m.published_at_ms != null && now - m.published_at_ms < NEW_WINDOW_MS && !seen.has(m.id))
+      // Fixtures you added yourself are not "announcements".
+      .filter((m) => m.source !== 'user' && m.published_at_ms != null && now - m.published_at_ms < NEW_WINDOW_MS && !seen.has(m.id))
       .sort((a, b) => (b.published_at_ms ?? 0) - (a.published_at_ms ?? 0));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches, seen, data.clockOffset, tick]);
@@ -228,26 +238,25 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
     storage.set('availability', a);
   };
 
-  // League / big-match / search filters first, then availability (with counts for each tab).
-  const { visible, counts } = useMemo(() => {
+  // Tickets page = matches whose sale has STARTED (on sale or sold out). Not-yet-on-sale matches live on the Schedule page.
+  const { visible, counts, saleStartedMatches } = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
     const now = Date.now() + data.clockOffset;
-    const base = matches.filter(
+    const started = matches.filter((m) => !m.sale_date_tba && now >= m.sale_opens_at_ms && m.kickoff_ms > now);
+    const base = started.filter(
       (m) =>
         filters.leagues.has(m.league_id) &&
         (!filters.favoritesOnly || favorites.includes(m.league_id)) &&
         (!filters.famousOnly || m.famous_name) &&
         (!q || `${m.home_team} ${m.away_team} ${m.famous_name ?? ''} ${m.stadium} ${m.city}`.toLowerCase().includes(q)),
     );
-    const isAvailable = (m: Match) => now >= m.sale_opens_at_ms && !isSoldOut(m, now);
-    const isSoon = (m: Match) => now < m.sale_opens_at_ms;
+    const soldOut = (m: Match) => isSoldOut(m, now);
     const counts: Record<Availability, number> = {
-      all: base.length,
-      available: base.filter(isAvailable).length,
-      soon: base.filter(isSoon).length,
+      available: base.filter((m) => !soldOut(m)).length,
+      soldout: base.filter(soldOut).length,
     };
-    const visible = availability === 'available' ? base.filter(isAvailable) : availability === 'soon' ? base.filter(isSoon) : base;
-    return { visible, counts };
+    const visible = availability === 'soldout' ? base.filter(soldOut) : base.filter((m) => !soldOut(m));
+    return { visible, counts, saleStartedMatches: started };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches, filters, favorites, availability, data.clockOffset, tick]);
 
@@ -313,6 +322,7 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
         onReset={() => void actions.resetDemo()}
         page={page}
         onPage={changePage}
+        watchBadge={watches.filter((w) => ['watching', 'armed', 'sale_open', 'purchasing'].includes(w.status)).length}
         myBadge={
           orders.filter((o) => o.status === 'requires_action').length +
           watches.filter((w) => w.status === 'failed' && !orders.some((o) => o.match_id === w.match_id && ['paid', 'pending', 'requires_action'].includes(o.status))).length
@@ -357,13 +367,27 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
           onImport={async () => {
             await actions.importSchedule();
           }}
+          announcements={
+            <JustScheduled
+              fixtures={newFixtures.filter((m) => m.sale_date_tba || m.sale_opens_at_ms > Date.now() + data.clockOffset)}
+              leagues={leagues}
+              favorites={favorites}
+              watchByMatch={watchByMatch}
+              schedule={schedule}
+              onPreorder={preorder}
+              onOpen={openFixture}
+              onDismiss={(id) => markSeen([id])}
+              onDismissAll={() => markSeen(newFixtures.map((m) => m.id))}
+            />
+          }
         />
       )}
 
-      <div className="layout" hidden={page !== 'tickets'}>
+      <div className="layout layout-browse" hidden={page !== 'tickets'}>
         <Filters
           leagues={leagues}
           matches={matches}
+          countMatches={saleStartedMatches}
           watches={watches}
           favorites={favorites}
           value={filters}
@@ -371,17 +395,6 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
           onToggleFavorite={toggleFavorite}
         />
         <div className="main-col">
-        <JustScheduled
-          fixtures={newFixtures}
-          leagues={leagues}
-          favorites={favorites}
-          watchByMatch={watchByMatch}
-          schedule={schedule}
-          onPreorder={preorder}
-          onOpen={openFixture}
-          onDismiss={(id) => markSeen([id])}
-          onDismissAll={() => markSeen(newFixtures.map((m) => m.id))}
-        />
         <MatchGrid
           newIds={newIds}
           matches={visible}
@@ -401,16 +414,17 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
           onQuantity={updateQuantity}
           onToggle={onToggleCard}
           onSelectMany={(ids) => setSelected(new Set([...selected, ...ids]))}
+          onUnselectMany={(ids) => setSelected(new Set([...selected].filter((id) => !ids.includes(id))))}
           onClear={() => setSelected(new Set())}
           onWatch={() => void watchSelected()}
           onQuickBuy={onQuickBuyCard}
-          onAddMatch={() => {
-            setAddMatchLeague(undefined);
-            setModal('add-match');
-          }}
+          onGoSchedule={() => changePage('schedule')}
         />
         </div>
-        <div className="right-col">
+      </div>
+
+      <div className="watch-page" hidden={page !== 'watch'}>
+        <div className="watch-main">
           <Watchlist
             watches={watches}
             matches={matchById}
@@ -424,10 +438,9 @@ function Dashboard({ data, connected, actions }: { data: Data; connected: boolea
           />
           <EventLog logs={logs} />
         </div>
-      </div>
-
-      <div className="bottom" hidden={page !== 'tickets'}>
-        <OrdersTable orders={orders} onRefund={actions.refund} onAuthenticate={authenticate} onView={(o) => setTicketOrderId(o.id)} />
+        <div className="watch-orders">
+          <OrdersTable orders={orders} onRefund={actions.refund} onAuthenticate={authenticate} onView={(o) => setTicketOrderId(o.id)} />
+        </div>
       </div>
 
       <p className="footnote">

@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNow } from '../hooks/useNow';
 import { countdown, inZone, zoneAbbr } from '../lib/format';
 import type { League, Match, Order, Watch } from '../types';
@@ -15,9 +15,14 @@ interface Props {
   onOpen: (m: Match) => void;
   onAddMatch: (leagueId: string) => void;
   onImport: () => Promise<void>;
+  /** "Just scheduled" strip of newly announced fixtures. */
+  announcements?: ReactNode;
 }
 
-type SaleFilter = 'all' | 'presale' | 'onsale';
+type SaleFilter = 'all' | 'announced' | 'tba';
+
+/** Schedule page = matches whose ticket sale has NOT started yet (pre-order). */
+const notStarted = (m: Match, now: number) => m.kickoff_ms > now && (m.sale_date_tba || now < m.sale_opens_at_ms);
 
 /** Full fixture list per competition, grouped by month and day. Select a match → pick seats → pre-order. */
 export function SchedulePage(p: Props) {
@@ -26,29 +31,41 @@ export function SchedulePage(p: Props) {
     const fav = (id: string) => (p.favorites.includes(id) ? p.favorites.indexOf(id) : 1000);
     return [...p.leagues].sort((a, b) => fav(a.id) - fav(b.id));
   }, [p.leagues, p.favorites]);
-  const [league, setLeague] = useState<string>(() => ordered[0]?.id ?? 'LIGA');
+  const [league, setLeagueState] = useState<string>(() => ordered[0]?.id ?? 'LIGA');
+  const [userPicked, setUserPicked] = useState(false);
+  const setLeague = (id: string) => {
+    setUserPicked(true);
+    setLeagueState(id);
+  };
   const [filter, setFilter] = useState<SaleFilter>('all');
   const [q, setQ] = useState('');
 
+  // Re-evaluate every second so a match leaves this page the moment its sale opens.
+  const nowSec = Math.floor(useNow() / 1000);
+
   const counts = useMemo(() => {
     const c = new Map<string, number>();
-    const now = Date.now();
-    for (const m of p.matches) if (m.kickoff_ms > now) c.set(m.league_id, (c.get(m.league_id) ?? 0) + 1);
+    const now = nowSec * 1000;
+    for (const m of p.matches) if (notStarted(m, now)) c.set(m.league_id, (c.get(m.league_id) ?? 0) + 1);
     return c;
-  }, [p.matches]);
+  }, [p.matches, nowSec]);
+
+  // Until the user picks a competition, open on the first one that actually has upcoming sales.
+  useEffect(() => {
+    if (userPicked || (counts.get(league) ?? 0) > 0) return;
+    const first = ordered.find((l) => (counts.get(l.id) ?? 0) > 0);
+    if (first) setLeagueState(first.id);
+  }, [counts, league, ordered, userPicked]);
 
   const fixtures = useMemo(() => {
-    const now = Date.now();
+    const now = nowSec * 1000;
     const needle = q.trim().toLowerCase();
     return p.matches
-      .filter((m) => m.league_id === league && m.kickoff_ms > now)
+      .filter((m) => m.league_id === league && notStarted(m, now))
       .filter((m) => !needle || `${m.home_team} ${m.away_team} ${m.stadium} ${m.city}`.toLowerCase().includes(needle))
-      .filter((m) => {
-        const open = now >= m.sale_opens_at_ms && !m.sale_date_tba;
-        return filter === 'all' || (filter === 'presale' ? !open : open && totalAvailable(m) > 0);
-      })
+      .filter((m) => filter === 'all' || (filter === 'tba' ? m.sale_date_tba : !m.sale_date_tba))
       .sort((a, b) => a.kickoff_ms - b.kickoff_ms);
-  }, [p.matches, league, filter, q]);
+  }, [p.matches, league, filter, q, nowSec]);
 
   // month -> day -> matches (in the stadium's local calendar)
   const grouped = useMemo(() => {
@@ -88,14 +105,16 @@ export function SchedulePage(p: Props) {
         </ul>
       </aside>
 
-      <main className="panel sch-main">
+      <main className="sch-col">
+        {p.announcements}
+        <div className="panel sch-main">
         <div className="sch-head">
           <h2 className="sch-title">
             {current && <LeagueLogo leagueId={current.id} size={36} />}
             <span>
-              {current?.name} schedule
+              {current?.name}: upcoming ticket sales
               <small>
-                {fixtures.length} upcoming fixture{fixtures.length === 1 ? '' : 's'} · select a match to pick seats and pre-order
+                {fixtures.length} match{fixtures.length === 1 ? '' : 'es'} not on sale yet · pick seats and pre-order. We buy them the instant the sale opens
               </small>
             </span>
           </h2>
@@ -133,9 +152,9 @@ export function SchedulePage(p: Props) {
           <div className="segmented">
             {(
               [
-                ['all', 'All fixtures'],
-                ['presale', 'Not on sale yet (pre-order)'],
-                ['onsale', 'On sale now'],
+                ['all', 'All upcoming sales'],
+                ['announced', 'Sale date announced'],
+                ['tba', 'Sale date TBA'],
               ] as const
             ).map(([k, label]) => (
               <button key={k} className={`seg ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>
@@ -148,7 +167,7 @@ export function SchedulePage(p: Props) {
 
         {fixtures.length === 0 ? (
           <div className="empty">
-            No fixtures here yet.
+            No upcoming ticket sales here right now. Matches already on sale are on the Tickets page.
             <div className="empty-cta">
               <button className="primary" onClick={() => p.onAddMatch(league)}>
                 ＋ Add a match and pre-order seats
@@ -173,6 +192,7 @@ export function SchedulePage(p: Props) {
             </section>
           ))
         )}
+        </div>
       </main>
     </div>
   );

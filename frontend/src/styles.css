@@ -140,6 +140,16 @@ input:focus, select:focus, button:focus-visible, [role='button']:focus-visible {
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0; box-shadow: var(--shadow); }
 .panel h2, .side-card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 12px; font-weight: 700; }
 .bottom { padding: 0 24px 20px; }
+/* Tickets page: just the match browser, full width */
+.layout.layout-browse { grid-template-columns: 280px minmax(0, 1fr); }
+@media (max-width: 1350px) { .layout.layout-browse { grid-template-columns: 260px minmax(0, 1fr); } }
+@media (max-width: 900px) { .layout.layout-browse { grid-template-columns: 1fr; } }
+/* Watchlist page: watchlist + engine log side by side, orders below */
+.watch-page { display: flex; flex-direction: column; gap: 20px; padding: 20px 24px; }
+.watch-page[hidden] { display: none; }
+.watch-main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; align-items: start; }
+@media (max-width: 1000px) { .watch-main { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .watch-page { padding: 16px; } }
 .footnote { font-size: 12px; color: var(--muted); padding: 0 24px 96px; max-width: 920px; }
 .empty { color: var(--muted); text-align: center; padding: 28px 10px; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
@@ -324,7 +334,7 @@ td.actions { display: flex; gap: 4px; }
 .modal-box { outline: none; }
 body.modal-open { overflow: hidden; }
 /* Freeze decorative animations behind an open dialog. */
-body.modal-open .header *, body.modal-open .layout *, body.modal-open .bottom *, body.modal-open .buy-banner * { animation: none !important; transition: none !important; }
+body.modal-open .header *, body.modal-open .layout *, body.modal-open .bottom *, body.modal-open .watch-page *, body.modal-open .buy-banner * { animation: none !important; transition: none !important; }
 .modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; width: min(460px, 100%); box-shadow: var(--shadow-lg); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .modal-head h3 { margin: 0; }
@@ -350,7 +360,7 @@ body.modal-open .header *, body.modal-open .layout *, body.modal-open .bottom *,
 .league-row:not(.on) .league-logo, .league-row:not(.on) .league-logo-svg { filter: grayscale(1); opacity: .5; }
 
 /* ============================================================ availability switch */
-.avail-switch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 5px; margin-bottom: 14px; }
+.avail-switch { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 5px; margin-bottom: 14px; }
 .avail-tab { border: none; background: transparent; border-radius: 9px; padding: 9px 10px; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; color: var(--muted); }
 .avail-tab:hover:not(:disabled) { background: var(--hover); border: none; }
 .avail-tab.on { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
@@ -677,6 +687,7 @@ button.big { padding: 12px 20px; font-size: 15px; border-radius: 11px; }
 /* ============================================================ schedule page */
 .schedule-page { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 20px; padding: 20px 24px 60px; align-items: start; }
 @media (max-width: 900px) { .schedule-page { grid-template-columns: 1fr; } }
+.sch-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .sch-leagues { position: sticky; top: 82px; max-height: calc(100vh - 100px); overflow-y: auto; }
 .sch-leagues ul { display: flex; flex-direction: column; gap: 3px; }
 .sch-league { width: 100%; display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 10px; border: 1px solid transparent; background: transparent; text-align: left; }

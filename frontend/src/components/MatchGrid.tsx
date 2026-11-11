@@ -5,7 +5,7 @@ import type { League, Match, Watch } from '../types';
 import { LeagueLogo, TeamCrest } from './Crest';
 import { SaleBadge, totalAvailable } from './SaleBadge';
 
-export type Availability = 'all' | 'available' | 'soon';
+export type Availability = 'available' | 'soldout';
 
 interface Props {
   matches: Match[];
@@ -22,6 +22,7 @@ interface Props {
   onQuantity: (n: number) => void;
   onToggle: (id: number) => void;
   onSelectMany: (ids: number[]) => void;
+  onUnselectMany: (ids: number[]) => void;
   onClear: () => void;
   onWatch: () => void;
   onQuickBuy: (m: Match) => void;
@@ -29,13 +30,12 @@ interface Props {
   favorites: string[];
   onToggleFavorite: (leagueId: string) => void;
   newIds: Set<number>;
-  onAddMatch: () => void;
+  onGoSchedule: () => void;
 }
 
 const AVAILABILITY: { key: Availability; label: string; hint: string }[] = [
-  { key: 'all', label: 'All tickets', hint: 'Every upcoming match' },
-  { key: 'available', label: 'Available now', hint: 'On sale with seats left' },
-  { key: 'soon', label: 'Not on sale yet', hint: 'Pre-order: buys automatically when the sale opens' },
+  { key: 'available', label: 'Sale started', hint: 'Sale is open and seats are still available' },
+  { key: 'soldout', label: 'Sold out', hint: 'No seats left' },
 ];
 
 export function MatchGrid(p: Props) {
@@ -87,9 +87,6 @@ export function MatchGrid(p: Props) {
             ))}
           </select>
         </label>
-        <button onClick={p.onAddMatch} title="Add a fixture that isn't listed yet and pre-order seats">
-          ＋ Add a match
-        </button>
         <button onClick={p.onClear} disabled={!p.selected.size}>
           Clear
         </button>
@@ -100,13 +97,13 @@ export function MatchGrid(p: Props) {
 
       {groups.length === 0 ? (
         <div className="empty">
-          {p.availability === 'available'
-            ? 'No tickets available right now for these competitions. Try "Not on sale yet" and pre-order.'
-            : 'No matches for these filters.'}
+          {p.availability === 'soldout'
+            ? 'No sold-out matches for these filters.'
+            : 'No matches with seats on sale right now for these competitions.'}
           <div className="empty-cta">
-            Can't find your match?{' '}
-            <button className="primary" onClick={p.onAddMatch}>
-              ＋ Add it and pre-order seats
+            Matches whose sale hasn't started are on the Schedule page, where you can pre-order seats.{' '}
+            <button className="primary" onClick={p.onGoSchedule}>
+              📅 Go to Schedule
             </button>
           </div>
         </div>
@@ -127,9 +124,18 @@ export function MatchGrid(p: Props) {
                   {p.favorites.includes(league.id) ? '★' : '☆'}
                 </button>
               </h3>
-              <button className="link small" onClick={() => p.onSelectMany(matches.map((m) => m.id))}>
-                Select all
-              </button>
+              {(() => {
+                const ids = matches.map((m) => m.id);
+                const allSelected = ids.every((id) => p.selected.has(id));
+                return (
+                  <button
+                    className="link small"
+                    onClick={() => (allSelected ? p.onUnselectMany(ids) : p.onSelectMany(ids))}
+                  >
+                    {allSelected ? 'Unselect all' : 'Select all'}
+                  </button>
+                );
+              })()}
             </div>
             <div className="grid">
               {matches.map((m) => (

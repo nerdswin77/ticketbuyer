@@ -111,7 +111,9 @@ function FixtureToast({
         <TeamCrest team={m.away_team} size={34} />
       </button>
       <div className="ft-bottom">
-        <span className={saleIn > 0 ? 'warn' : 'ok'}>{saleIn > 0 ? `On sale in ${countdown(saleIn)}` : 'On sale now'}</span>
+        <span className={saleIn > 0 ? 'warn' : 'ok'}>
+          {m.sale_date_tba ? 'Sale date TBA' : saleIn > 0 ? `On sale in ${countdown(saleIn)}` : 'On sale now'}
+        </span>
         <BuyButton match={m} watch={watch} onBuy={() => onPreorder(m)} />
       </div>
     </div>

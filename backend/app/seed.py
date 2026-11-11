@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import League, Match, SeatBlock, SeatCategory, Watch, now_ms
+from .models import League, Match, Order, SeatBlock, SeatCategory, Watch, now_ms
 from .services.seating import LAYOUT
 from .schemas import MockCardIn, PaymentMethodIn
 from .services.payments import get_gateway
@@ -428,10 +428,21 @@ def restock(db: Session, m: Match, rng: random.Random) -> None:
     """(Re)build the match's seat maps. Before the general sale opens every seat is available;
     rival buyers take seats only once the sale is live."""
     existing = {b.block: b for b in db.scalars(select(SeatBlock).where(SeatBlock.match_id == m.id))}
+    active_orders = db.scalars(
+        select(Order).where(Order.match_id == m.id, Order.status.in_(["paid", "pending", "requires_action"]))
+    ).all()
     for c in m.categories:
         free_total = 0
         for rank, spec in enumerate(LAYOUT.get(c.code, [])):
             state = "0" * (spec.rows * spec.seats_per_row)
+            # Never free seats that belong to a live order (paid, being paid or awaiting 3-D Secure).
+            held = [pos for o in active_orders if o.block == spec.name for pos in o.positions]
+            if held:
+                chars = list(state)
+                for r, s in held:
+                    if 1 <= r <= spec.rows and 1 <= s <= spec.seats_per_row:
+                        chars[(r - 1) * spec.seats_per_row + s - 1] = "1"
+                state = "".join(chars)
             sb = existing.get(spec.name)
             if sb is None:
                 sb = SeatBlock(match_id=m.id, category_id=c.id, block=spec.name, block_index=spec.block_index, rank=rank,

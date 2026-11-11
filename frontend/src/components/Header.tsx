@@ -18,9 +18,10 @@ interface Props {
   page: Page;
   onPage: (p: Page) => void;
   myBadge: number;
+  watchBadge: number;
 }
 
-export type Page = 'tickets' | 'schedule' | 'mine';
+export type Page = 'tickets' | 'watch' | 'schedule' | 'mine';
 
 export function Header(p: Props) {
   const now = useNow();
@@ -41,6 +42,10 @@ export function Header(p: Props) {
         </button>
         <button className={p.page === 'schedule' ? 'on' : ''} onClick={() => p.onPage('schedule')} aria-current={p.page === 'schedule'}>
           📅 Schedule
+        </button>
+        <button className={`badge-host ${p.page === 'watch' ? 'on' : ''}`} onClick={() => p.onPage('watch')} aria-current={p.page === 'watch'}>
+          🎯 Watchlist
+          {p.watchBadge > 0 && <span className="count-badge">{p.watchBadge}</span>}
         </button>
         <button className={`badge-host ${p.page === 'mine' ? 'on' : ''}`} onClick={() => p.onPage('mine')} aria-current={p.page === 'mine'}>
           🎫 My tickets

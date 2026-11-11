@@ -14,6 +14,8 @@ export interface FilterState {
 interface Props {
   leagues: League[];
   matches: Match[];
+  /** Matches counted next to each competition (defaults to `matches`). */
+  countMatches?: Match[];
   watches: Watch[];
   favorites: string[];
   value: FilterState;
@@ -27,7 +29,7 @@ const GROUPS: { region: Region; label: string }[] = [
   { region: 'uefa', label: 'European cups' },
 ];
 
-export function Filters({ leagues, matches, watches, favorites, value, onChange, onToggleFavorite }: Props) {
+export function Filters({ leagues, matches, countMatches, watches, favorites, value, onChange, onToggleFavorite }: Props) {
   const now = useNow();
   const onSale = matches.filter((m) => now >= m.sale_opens_at_ms && totalAvailable(m) > 0).length;
   const opening = matches.filter((m) => m.sale_opens_at_ms > now && m.sale_opens_at_ms - now < 10 * 60_000).length;
@@ -35,7 +37,7 @@ export function Filters({ leagues, matches, watches, favorites, value, onChange,
   const bought = watches.filter((w) => w.status === 'purchased').length;
 
   const countBy = new Map<string, number>();
-  for (const m of matches) countBy.set(m.league_id, (countBy.get(m.league_id) ?? 0) + 1);
+  for (const m of countMatches ?? matches) countBy.set(m.league_id, (countBy.get(m.league_id) ?? 0) + 1);
   const favSet = new Set(favorites);
   const byId = new Map(leagues.map((l) => [l.id, l]));
 

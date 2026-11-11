@@ -312,6 +312,22 @@ def test_manage_paid_ticket_attendees_calendar_and_preorder(client):
     assert all(x["id"] != w["id"] for x in client.get("/api/watches").json())
 
 
+def test_demo_reset_keeps_seats_of_paid_orders(client):
+    add_card(client)
+    m = open_match(client)
+    r = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "quantity": 2, "category_codes": ["OC"]})
+    o = _order(client, _wait(client, r.json()["id"])["order_id"])
+    assert o["status"] == "paid"
+
+    client.post("/api/demo/reset")  # regenerates every seat map
+
+    blk = client.get(f"/api/matches/{m['id']}/blocks/{o['block']}").json()
+    spr = blk["seats_per_row"]
+    assert all(blk["state"][(r - 1) * spr + s - 1] == "1" for r, s in o["positions"]), "paid seats must stay sold"
+    again = client.post("/api/watches/quick-buy", json={"match_id": m["id"], "seats": {"block": o["block"], "positions": o["positions"]}})
+    assert again.status_code == 409  # nobody can buy them a second time
+
+
 def test_favorite_leagues(client):
     r = client.put("/api/profile/favorites", json={"leagues": ["LIGA", "BRA", "LIGA"]})
     assert r.status_code == 200 and r.json()["favorite_leagues"] == ["LIGA", "BRA"]

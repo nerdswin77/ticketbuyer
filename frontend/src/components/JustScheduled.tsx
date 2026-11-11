@@ -83,7 +83,9 @@ export function JustScheduled(p: Props) {
                   </span>
                 </div>
                 <div className={`js-sale ${saleIn > 0 ? 'soon' : 'open'}`}>
-                  {saleIn > 0 ? (
+                  {m.sale_date_tba ? (
+                    <>Sale date not announced yet: pre-order now</>
+                  ) : saleIn > 0 ? (
                     <>
                       Tickets on sale in <b>{countdown(saleIn)}</b>
                     </>
